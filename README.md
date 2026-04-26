@@ -1,50 +1,45 @@
-# AI-Powered Daily Task Summary
+# n8n AI Automations
 
-Automated daily workflow that fetches tasks from ClickUp, generates 
-a structured summary using Claude, and delivers it via Google Docs + Gmail.
+A growing collection of production-ready n8n workflows that solve real business problems with AI.
 
-## Problem
+Each workflow demonstrates a different automation pattern — webhook triggers, API integration, structured prompt engineering, multi-output delivery — and is built to be forked, customized, and deployed.
 
-Project managers spend 30-60 minutes daily compiling status reports 
-from ClickUp tasks across multiple team members. Manual aggregation 
-is error-prone and doesn't scale beyond 5-10 active tasks.
+---
 
-## Solution
+## Workflows
 
-End-to-end automation: ClickUp → Claude AI → Google Docs → Email.
-Triggers manually or on schedule. Generates a structured report with:
-- In Progress section
-- To Do section  
-- Blockers (auto-detected from task descriptions)
-- Statistics summary
+| Workflow | Description | Stack |
+|---|---|---|
+| [📋 Daily Summary](./daily-summary) | Fetches active ClickUp tasks and generates a structured daily report (Google Doc + email) | ClickUp · Claude · Google Docs · Gmail |
+| [✍️ Content Brief Generator](./content-brief) | Auto-generates a content brief when a tag is added to a ClickUp task | ClickUp Webhook · Claude · Google Docs |
 
-## Stack
+*More workflows coming — focused on agency, content, and SaaS automation use cases.*
 
-- **n8n** — orchestration layer
-- **ClickUp API** — task data source
-- **Anthropic Claude (via AI Agent node)** — content generation
-- **Google Docs API** — document creation and formatting
-- **Gmail API** — delivery
+---
 
-## Architecture
+## Philosophy
 
-<img width="1519" height="413" alt="image" src="https://github.com/user-attachments/assets/29b933e9-d31a-4d85-874f-e8d7c9a5897c" />
+- **Real problems, not demos.** Every workflow solves a task someone is doing manually right now.
+- **Production-ready.** Error handling, edge cases, and anti-hallucination guardrails are part of the design — not afterthoughts.
+- **Privacy-aware.** Claude is preferred over ChatGPT for business data — Anthropic doesn't train on API data by default, OpenAI requires explicit opt-out.
+- **Forkable.** All credentials and IDs are placeholders. Each workflow folder includes setup instructions.
 
-The workflow handles edge cases:
-- If no tasks are returned, sends a "nothing to report" notification 
-  instead of generating an empty document
-- Aggregation happens before AI processing to avoid token waste on 
-  duplicate data
-- Document creation and update are split into two operations for 
-  reliability (create empty → populate with content)
+## Setup
 
-## Customization
+Each workflow folder has its own README with:
+- Required credentials
+- ID placeholders to replace
+- Import and configuration steps
+- Customization options (prompts, triggers, filters)
 
-The Code node contains the prompt template. Edit `prompt.md` to 
-customize tone, structure, or output language.
+General requirements:
+- n8n instance (self-hosted or cloud)
+- API access for the services involved (varies per workflow)
 
-## Use cases
+## About
 
-- Daily standup automation for distributed teams
-- Weekly executive reports
-- Client-facing project status updates (with appropriate filters)
+Built by a backend developer (PHP / Java) focused on n8n + AI automation. Open to consulting work on similar projects — reach out via [LinkedIn](#) or email.
+
+## License
+
+MIT — fork, modify, and use freely.

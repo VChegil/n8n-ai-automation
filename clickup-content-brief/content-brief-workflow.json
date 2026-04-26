@@ -1,0 +1,292 @@
+{
+  "name": "AI Content Brief Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "team": "YOUR_TEAM_ID",
+        "events": [
+          "taskTagUpdated"
+        ],
+        "filters": {
+          "folderId": "YOUR_FOLDER_ID"
+        }
+      },
+      "type": "n8n-nodes-base.clickUpTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -96
+      ],
+      "id": "9b1969c8-9467-4b15-8ad2-a997c7922671",
+      "name": "ClickUp Trigger",
+      "webhookId": "PLACEHOLDER",
+      "credentials": {
+        "clickUpApi": {
+          "id": "PLACEHOLDER",
+          "name": "ClickUp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5d1d8f9e-15d0-4d7d-bd99-6dd97bc7638e",
+              "leftValue": "={{ $json.history_items[0].after[0].name }}",
+              "rightValue": "content-brief",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        -96
+      ],
+      "id": "4250d006-6715-416f-b916-bacf4e4ad5f9",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.clickup.com/api/v2/task/{{ $json.task_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "d9c1f7dc-6e0e-4bca-952a-4adef0dcdb1c",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER",
+          "name": "ClickUp API token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Generate a short content brief for an article titled: \"{{ $('HTTP Request').item.json.name }}\"\n\nOutput EXACTLY this format:\n\n## Content Brief: {{ $('HTTP Request').item.json.name }}\n\n### 🎯 Target Audience\n[1-2 sentences: who this is for, their pain point]\n\n### 📌 Key Points (5 max)\n- [point 1]\n- [point 2]\n- [point 3]\n\n### 🔍 SEO Keywords\n- Primary: [1 keyword]\n- Secondary: [3-4 keywords]\n\n### 📐 Suggested Structure\n1. [Section name]\n2. [Section name]\n3. [Section name]\n\n### ⏱ Estimated Read Time\n[X min read]",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a content strategist. Generate concise, actionable content briefs. Always follow the exact format given. Never add extra sections or commentary. Only state facts derivable from the article title — do not invent statistics, sources, or specific claims."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "b210f510-80b3-4f27-92c8-24bc994fc68f",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-sonnet-4-20250514",
+          "mode": "list",
+          "cachedResultName": "Claude Sonnet 4"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        744,
+        128
+      ],
+      "id": "4900aeba-a6bf-4b5d-a536-3c507a1742c5",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "PLACEHOLDER",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "id": "={{ $('HTTP Request').item.json.id }}",
+        "updateFields": {
+          "content": "={{ $json.text }}"
+        }
+      },
+      "type": "n8n-nodes-base.clickUp",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        -96
+      ],
+      "id": "81e4d7b2-b0df-43b4-80ba-ca93ef405d49",
+      "name": "Update a task",
+      "credentials": {
+        "clickUpApi": {
+          "id": "PLACEHOLDER",
+          "name": "ClickUp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "folderId": "=YOUR_GOOGLE_DRIVE_FOLDER_ID",
+        "title": "=Content Brief - {{ $('HTTP Request').item.json.name }} - {{ $now.format('yyyy-MM-dd') }}"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        -96
+      ],
+      "id": "f82f0e6d-08ce-456f-b664-5d26defca215",
+      "name": "Create a document",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "PLACEHOLDER",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "text": "={{ $('Basic LLM Chain').item.json.text }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -96
+      ],
+      "id": "828a56ec-9741-48c2-9c13-b7872dbabaf2",
+      "name": "Update a document",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "PLACEHOLDER",
+          "name": "Google Docs account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ClickUp Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Update a task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a task": {
+      "main": [
+        [
+          {
+            "node": "Create a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a document": {
+      "main": [
+        [
+          {
+            "node": "Update a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
