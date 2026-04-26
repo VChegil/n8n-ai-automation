@@ -10,15 +10,15 @@
         -96
       ],
       "id": "c0533a64-a647-4aa3-b6eb-689152f48a1b",
-      "name": "When clicking ‘Execute workflow’"
+      "name": "When clicking 'Execute workflow'"
     },
     {
       "parameters": {
         "operation": "getAll",
-        "team": "90121675572",
-        "space": "90127261070",
-        "folder": "901210723655",
-        "list": "901217506113",
+        "team": "YOUR_TEAM_ID",
+        "space": "YOUR_SPACE_ID",
+        "folder": "YOUR_FOLDER_ID",
+        "list": "YOUR_LIST_ID",
         "filters": {
           "statuses": [
             "in progress",
@@ -37,7 +37,7 @@
       "name": "Get many tasks",
       "credentials": {
         "clickUpApi": {
-          "id": "J8LxIzzXRXS8t9nP",
+          "id": "PLACEHOLDER",
           "name": "ClickUp account"
         }
       }
@@ -47,7 +47,7 @@
         "promptType": "define",
         "text": "={{ $json.prompt }}",
         "options": {
-          "systemMessage": "=System:\nYou are a project reporting assistant. Given a list of ClickUp tasks, generate a structured daily summary for a project manager.\n\nOutput EXACTLY this format:\n\n## Daily Project Summary — {{ $now.format('yyyy-MM-dd') }}\n\n### 🔄 In Progress\n- [Task name] — [assignee], [what's being done, 1 sentence]\n\n### 📋 To Do\n- [Task name] — [assignee], due [due date or \"no due date\"]\n\n### 🚧 Blockers\n- Flag any task overdue by more than 2 days or with \"block\"/\"waiting\" in description\n\n### 📊 Stats\n- Total tasks: X\n- In Progress: X\n- To Do: X  \n- Overdue: X\n- Most loaded assignee: [name] (X tasks)\n\nIf no tasks in a category, write \"None.\"\nIf more than 30 tasks total, group each section by assignee."
+          "systemMessage": "=System:\nYou are a project reporting assistant. Given a list of ClickUp tasks, generate a structured daily summary for a project manager.\n\nOutput EXACTLY this format:\n\n## Daily Project Summary — {{ $now.format('yyyy-MM-dd') }}\n\n### 🔄 In Progress\n- [Task name] — [assignee], [what's being done, 1 sentence]\n\n### 📋 To Do\n- [Task name] — [assignee], due [due date or \"no due date\"]\n\n### 🚧 Blockers\n- Flag any task overdue by more than 2 days or with \"block\"/\"waiting\" in description\n\n### 📊 Stats\n- Total tasks: X\n- In Progress: X\n- To Do: X  \n- Overdue: X\n- Most loaded assignee: [name] (X tasks)\n\nIf no tasks in a category, write \"None.\"\nIf more than 30 tasks total, group each section by assignee.\n\nIMPORTANT: Only state facts present in the task data. If a task has no description, simply note that — do NOT invent activity status, urgency, or details that aren't in the source data."
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
@@ -79,14 +79,14 @@
       "name": "Anthropic Chat Model",
       "credentials": {
         "anthropicApi": {
-          "id": "q0s6SCRM4y0kqfOh",
-          "name": "Anthropic account 2"
+          "id": "PLACEHOLDER",
+          "name": "Anthropic account"
         }
       }
     },
     {
       "parameters": {
-        "folderId": "=1NKNUuv75D0vsr4JLdhfRuwKZkeFb0iYB",
+        "folderId": "=YOUR_GOOGLE_DRIVE_FOLDER_ID",
         "title": "=Daily Summary - {{ $now.format('yyyy-MM-dd') }}"
       },
       "type": "n8n-nodes-base.googleDocs",
@@ -99,8 +99,8 @@
       "name": "Create a document",
       "credentials": {
         "googleDocsOAuth2Api": {
-          "id": "YDZdVCNNHK6af2S7",
-          "name": "Google Docs account 2"
+          "id": "PLACEHOLDER",
+          "name": "Google Docs account"
         }
       }
     },
@@ -121,11 +121,11 @@
       ],
       "id": "73be5f5f-8be4-46c5-bf9e-d13b17b12b33",
       "name": "Send a message",
-      "webhookId": "67c062fa-18a2-4ebf-a801-98790595f1b6",
+      "webhookId": "PLACEHOLDER",
       "credentials": {
         "gmailOAuth2": {
-          "id": "1UlXgdZaDk6Tj3HW",
-          "name": "your-email@example.com"
+          "id": "PLACEHOLDER",
+          "name": "Gmail account"
         }
       }
     },
@@ -191,11 +191,11 @@
       ],
       "id": "f4925994-2b73-4d6f-b455-ab6212658de9",
       "name": "Send a message1",
-      "webhookId": "b9ba237e-b3a5-475e-bd67-0cc98a60fec3",
+      "webhookId": "PLACEHOLDER",
       "credentials": {
         "gmailOAuth2": {
-          "id": "1UlXgdZaDk6Tj3HW",
-          "name": "your-email@example.com"
+          "id": "PLACEHOLDER",
+          "name": "Gmail account"
         }
       }
     },
@@ -235,15 +235,15 @@
       "name": "Update a document",
       "credentials": {
         "googleDocsOAuth2Api": {
-          "id": "YDZdVCNNHK6af2S7",
-          "name": "Google Docs account 2"
+          "id": "PLACEHOLDER",
+          "name": "Google Docs account"
         }
       }
     }
   ],
   "pinData": {},
   "connections": {
-    "When clicking ‘Execute workflow’": {
+    "When clicking 'Execute workflow'": {
       "main": [
         [
           {
@@ -352,15 +352,10 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1",
-    "binaryMode": "separate",
-    "availableInMCP": false
+    "executionOrder": "v1"
   },
-  "versionId": "114e993b-0d3e-463c-972d-3d15755f808f",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": ""
+    "templateCredsSetupCompleted": false
   },
-  "id": "Rda6sLC33rXVI5rB",
   "tags": []
 }
