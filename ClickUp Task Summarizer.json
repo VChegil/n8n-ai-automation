@@ -1,0 +1,366 @@
+{
+  "name": "ClickUp Task Summarizer",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -96
+      ],
+      "id": "c0533a64-a647-4aa3-b6eb-689152f48a1b",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "team": "90121675572",
+        "space": "90127261070",
+        "folder": "901210723655",
+        "list": "901217506113",
+        "filters": {
+          "statuses": [
+            "in progress",
+            "to do",
+            "blocked"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.clickUp",
+      "typeVersion": 1,
+      "position": [
+        224,
+        -96
+      ],
+      "id": "7994d780-7fe4-4b69-9776-a532ba69bd51",
+      "name": "Get many tasks",
+      "credentials": {
+        "clickUpApi": {
+          "id": "J8LxIzzXRXS8t9nP",
+          "name": "ClickUp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "=System:\nYou are a project reporting assistant. Given a list of ClickUp tasks, generate a structured daily summary for a project manager.\n\nOutput EXACTLY this format:\n\n## Daily Project Summary — {{ $now.format('yyyy-MM-dd') }}\n\n### 🔄 In Progress\n- [Task name] — [assignee], [what's being done, 1 sentence]\n\n### 📋 To Do\n- [Task name] — [assignee], due [due date or \"no due date\"]\n\n### 🚧 Blockers\n- Flag any task overdue by more than 2 days or with \"block\"/\"waiting\" in description\n\n### 📊 Stats\n- Total tasks: X\n- In Progress: X\n- To Do: X  \n- Overdue: X\n- Most loaded assignee: [name] (X tasks)\n\nIf no tasks in a category, write \"None.\"\nIf more than 30 tasks total, group each section by assignee."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1120,
+        -192
+      ],
+      "id": "58f7dea2-38c3-4d72-b90d-792d247e7ed2",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-sonnet-4-6",
+          "mode": "list",
+          "cachedResultName": "Claude Sonnet 4.6"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1200,
+        32
+      ],
+      "id": "17feb324-3122-4f99-9932-2ca442b9dca1",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "q0s6SCRM4y0kqfOh",
+          "name": "Anthropic account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "folderId": "=1NKNUuv75D0vsr4JLdhfRuwKZkeFb0iYB",
+        "title": "=Daily Summary - {{ $now.format('yyyy-MM-dd') }}"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        -192
+      ],
+      "id": "a5e2647c-28d9-4604-ac9d-d541cb14576e",
+      "name": "Create a document",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YDZdVCNNHK6af2S7",
+          "name": "Google Docs account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=Daily ClickUp Summary - {{ $now.format('yyyy-MM-dd') }}",
+        "message": "={{ $('AI Agent').item.json.output.replace(/\\n/g, '<br>') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1904,
+        -192
+      ],
+      "id": "73be5f5f-8be4-46c5-bf9e-d13b17b12b33",
+      "name": "Send a message",
+      "webhookId": "67c062fa-18a2-4ebf-a801-98790595f1b6",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1UlXgdZaDk6Tj3HW",
+          "name": "your-email@example.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0f46d2dc-ee44-432f-bf01-c937806a7c26",
+              "leftValue": "={{ $json.data.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "246ae5df-4845-4de3-93c0-0ca118ecc8b4",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "1c4ccd0d-9f87-4b22-981c-cb371dffcf8d",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "ClickUp Task Summarizer",
+        "message": "No tasks found today, skipping",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "f4925994-2b73-4d6f-b455-ab6212658de9",
+      "name": "Send a message1",
+      "webhookId": "b9ba237e-b3a5-475e-bd67-0cc98a60fec3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1UlXgdZaDk6Tj3HW",
+          "name": "your-email@example.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json.data;\nconst tasks = Array.isArray(input) ? input : [input];\n\nconst formatted = tasks.map(t => ({\n  name: t.name,\n  status: t.status?.status,\n  assignee: t.assignees?.map(a => a.username).join(', ') || 'Unassigned',\n  due_date: t.due_date ? new Date(+t.due_date).toISOString().split('T')[0] : 'No due date',\n  description: (t.text_content || t.description || '').slice(0, 200),\n  overdue: t.due_date ? +t.due_date < Date.now() : false\n}));\n\nconst today = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    prompt: `Today is ${today}. Here are the tasks:\\n\\n${JSON.stringify(formatted, null, 2)}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -192
+      ],
+      "id": "e3feb0a4-a125-4a22-a541-23c00df34632",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "text": "={{ $('AI Agent').item.json.output }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -192
+      ],
+      "id": "77b10f7e-63e1-412c-a6ea-07569caacdf4",
+      "name": "Update a document",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "YDZdVCNNHK6af2S7",
+          "name": "Google Docs account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get many tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many tasks": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Create a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a document": {
+      "main": [
+        [
+          {
+            "node": "Update a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a document": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "114e993b-0d3e-463c-972d-3d15755f808f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": ""
+  },
+  "id": "Rda6sLC33rXVI5rB",
+  "tags": []
+}
