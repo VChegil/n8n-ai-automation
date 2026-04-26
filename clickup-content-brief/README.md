@@ -6,11 +6,12 @@ Real-time webhook automation. When a `content-brief` tag is added to any ClickUp
 
 Content teams spend the first hour of every new article on briefing — defining target audience, structure, SEO keywords, and read time. Most of this is repeatable from the article title alone.
 
-## Solution
-
 ## Architecture
 
 <img width="1324" height="362" alt="image" src="https://github.com/user-attachments/assets/0af7f152-957b-48de-bc4a-641fd5b23f91" />
+
+
+## Solution
 
 A tag-triggered workflow that turns the briefing step into a 5-second action: tag the task, get a structured brief.
 
