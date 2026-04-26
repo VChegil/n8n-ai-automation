@@ -1,67 +1,59 @@
-# n8n AI Automations
+# AI Content Brief Generator
 
-Production-ready n8n workflows that combine **ClickUp**, **Claude AI**, and **Google Workspace** to automate repetitive project management tasks.
+Real-time webhook automation. When a `content-brief` tag is added to any ClickUp task, this workflow auto-generates a structured content brief using Claude and writes it back into the task description + a Google Doc copy.
 
-Built as portfolio projects to demonstrate real-world AI automation patterns: API integration, webhook triggers, structured prompt engineering, and multi-output delivery.
+## Problem
 
----
+Content teams spend the first hour of every new article on briefing — defining target audience, structure, SEO keywords, and read time. Most of this is repeatable from the article title alone.
 
-## Workflows
+## Solution
 
-### 1. ClickUp Task Summarizer
+A tag-triggered workflow that turns the briefing step into a 5-second action: tag the task, get a structured brief.
 
-**Problem:** Project managers spend 30–60 minutes daily compiling status reports from active ClickUp tasks. Manual aggregation is error-prone and doesn't scale beyond a small team.
+## Flow
 
-**Solution:** Manual or scheduled trigger fetches all `In Progress` and `To Do` tasks, sends them through Claude for structured summarization, and delivers the result as a Google Doc + email.
-
-**Flow:**
-```
-Manual Trigger → ClickUp (Get Tasks) → Aggregate → IF (any tasks?)
-   ├── YES → Code (clean data + build prompt) → Claude AI Agent
-   │           → Create Google Doc → Update Google Doc → Send Email
-   └── NO  → Send "no tasks" notification
-```
-
-**Output sections:** In Progress / To Do / Blockers / Stats (with most-loaded assignee).
-
-**File:** [`daily-summary-workflow.json`](./content-brief-workflow.json)
-
----
-
-### 2. AI Content Brief Generator
-
-**Problem:** Content teams spend the first hour of any new article briefing it — defining target audience, structure, SEO keywords, and read time. Most of this is repeatable from the article title alone.
-
-**Solution:** Real-time webhook trigger. When a `content-brief` tag is added to any ClickUp task, the workflow auto-generates a structured brief using Claude and writes it back into the task description + a Google Doc copy.
-
-**Flow:**
 ```
 ClickUp Webhook (taskTagUpdated) → IF (tag = "content-brief")
    → HTTP Request (fetch full task) → Claude (Basic LLM Chain)
    → Update ClickUp task → Create Google Doc → Update Google Doc
 ```
 
-**Output sections:** Target Audience / Key Points / SEO Keywords (primary + secondary) / Suggested Structure / Estimated Read Time.
+## Output sections
 
-**Note on architecture:** The HTTP Request node is used (instead of the native ClickUp node) because the webhook payload only contains `task_id`, not the full task object. A direct API call returns all fields needed for the prompt.
+- 🎯 Target Audience
+- 📌 Key Points (5 max)
+- 🔍 SEO Keywords (primary + secondary)
+- 📐 Suggested Structure
+- ⏱ Estimated Read Time
 
-**File:** [`content-brief-workflow.json`](./content-brief-workflow.json)
+## Architecture note
 
----
+The HTTP Request node is used instead of the native ClickUp node because the webhook payload only contains `task_id`, not the full task object. A direct API call returns all fields needed for the prompt.
 
 ## Stack
 
-- **n8n** (self-hosted or cloud) — orchestration
-- **ClickUp API** — task data source / sink
-- **Anthropic Claude (Sonnet 4)** — content generation
-  - Used via n8n's AI Agent node (with memory/tool support) and Basic LLM Chain node
-- **Google Docs API** — document creation and population
-- **Gmail API** — delivery
+- n8n
+- ClickUp Webhook + API
+- Anthropic Claude (via Basic LLM Chain node)
+- Google Docs API
 
-## Why Claude over ChatGPT for this use case
+## Setup
 
-These workflows handle business data (tasks, project information, internal communications). Anthropic's API does not train models on data sent through the API by default, which matters for agency-client confidentiality. OpenAI requires explicit opt-out.
+1. Import [`content-brief-workflow.json`](./content-brief-workflow.json) into n8n
+2. Replace placeholders:
+   - `YOUR_TEAM_ID` — ClickUp team ID
+   - `YOUR_FOLDER_ID` — ClickUp folder to monitor
+   - `YOUR_GOOGLE_DRIVE_FOLDER_ID` — destination folder for generated docs
+3. Configure credentials:
+   - ClickUp API (used by Trigger and Update Task nodes)
+   - HTTP Header Auth named "ClickUp API token" — header `Authorization`, value = your ClickUp token (used by HTTP Request node)
+   - Anthropic API key
+   - Google Docs OAuth2
+4. Activate the workflow
+5. Add the `content-brief` tag to any ClickUp task to trigger generation
 
-## License
+## Customization
 
-MIT — fork, modify, and use freely.
+- **Prompt:** edit the `Basic LLM Chain` node's text and system message to change tone, language, or output structure
+- **Trigger condition:** the `IF` node currently matches the exact string `content-brief` — change to match a different tag name
+- **Filter scope:** the trigger watches a specific `folderId` — remove this filter to monitor the entire workspace
