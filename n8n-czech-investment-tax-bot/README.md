@@ -4,8 +4,6 @@ A self-hosted [n8n](https://n8n.io) workflow that calculates **Czech personal in
 
 No bank or broker API access. Your data stays in your own n8n instance.
 
-![Sale planner](screenshots/sell.png)
-
 ## What it does
 
 **On every imported statement**
@@ -31,10 +29,6 @@ No bank or broker API access. Your data stays in your own n8n instance.
 | `/help` | Command list |
 
 Replies are available in **English, Czech or Ukrainian** (one setting).
-
-| Workflow | Tax return summary |
-|---|---|
-| ![Workflow](screenshots/workflow.png) | ![DAP](screenshots/dap.png) |
 
 ## Requirements
 
