@@ -4,6 +4,11 @@ A self-hosted [n8n](https://n8n.io) workflow that calculates **Czech personal in
 
 No bank or broker API access. Your data stays in your own n8n instance.
 
+<img width="514" height="420" alt="Screenshot 2026-10-12 194220" src="https://github.com/user-attachments/assets/088d8e15-6fc8-4dbb-83cd-5ee8648ade08" />
+<img width="466" height="474" alt="Screenshot 2026-10-12 194238" src="https://github.com/user-attachments/assets/7aec7dea-47e1-42f3-a7ff-6341f3864c68" />
+
+
+
 ## What it does
 
 **On every imported statement**
