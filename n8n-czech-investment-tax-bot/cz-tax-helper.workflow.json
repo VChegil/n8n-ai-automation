@@ -11,11 +11,11 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        0
+        -272
       ],
       "id": "b2622e7e-5978-4501-a4d7-fdb4b5f2be20",
       "name": "Telegram Trigger",
-      "webhookId": "7ad9f23c-1dd7-4080-9413-25f535f8425f"
+      "webhookId": "f209e6a4-1439-4f61-a615-a634d37f0634"
     },
     {
       "parameters": {
@@ -26,12 +26,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        880,
-        16
+        896,
+        -256
       ],
       "id": "27be1cc2-ba14-49c2-bf13-4f2daf2fd0b0",
       "name": "Get a file",
-      "webhookId": "d3d97da8-2443-4c16-ac45-6b0bd6056b2d"
+      "webhookId": "761c2657-0111-4577-958c-9ef8d0015201"
     },
     {
       "parameters": {
@@ -47,8 +47,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        2672,
-        288
+        2688,
+        16
       ],
       "id": "ad97eb52-75b0-4939-8346-e9ebe3394e0c",
       "name": "Get existing lots",
@@ -62,8 +62,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2896,
-        288
+        2912,
+        16
       ],
       "id": "f6abf13f-55b8-4a16-be19-c7847b1b9843",
       "name": "FIFO Match + Time Test"
@@ -75,8 +75,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
-        192
+        2016,
+        -80
       ],
       "id": "27154e94-9e29-49ad-a733-b77ef76c36d3",
       "name": "Parse Import"
@@ -95,8 +95,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        3120,
-        288
+        3136,
+        16
       ],
       "id": "0a8bd7e6-723e-464f-9a31-39b4343ce952",
       "name": "Get YTD row",
@@ -117,8 +117,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        3344,
-        288
+        3360,
+        16
       ],
       "id": "d6bced62-8efa-4575-937d-2b96e750e9a0",
       "name": "Get rate cache",
@@ -132,8 +132,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3568,
-        288
+        3584,
+        16
       ],
       "id": "ff41b18b-b496-4147-b110-a46cd74a5c95",
       "name": "Collect dates needing CNB rate"
@@ -145,8 +145,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4208,
-        304
+        4256,
+        16
       ],
       "id": "9dcb5f68-9505-40b5-a369-47e06ab343de",
       "name": "Parse CNB response"
@@ -158,8 +158,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4240,
-        -64
+        4256,
+        -352
       ],
       "id": "a060c674-efee-4add-bda6-a2924f57eb91",
       "name": "To CZK + Update YTD"
@@ -178,8 +178,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4016,
-        -64
+        4032,
+        -352
       ],
       "id": "5d87fa3e-6550-44bf-8b5c-72a8b2181e17",
       "name": "Get rate cache final",
@@ -193,8 +193,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4944,
-        416
+        4704,
+        208
       ],
       "id": "dfa331d4-2f6b-4da2-bc53-f2c878951dfb",
       "name": "Build Telegram Summary"
@@ -213,8 +213,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1104,
-        16
+        1120,
+        -256
       ],
       "id": "f6d89f19-6c75-49e8-b8d4-d4c469c6df50",
       "name": "Check processed files",
@@ -290,8 +290,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        224
+        4704,
+        16
       ],
       "id": "225e3983-18ee-403f-9935-25453ef02d09",
       "name": "Mark file processed"
@@ -303,8 +303,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2224,
-        192
+        2240,
+        -80
       ],
       "id": "8ef98db3-6447-4370-a47c-ad195e0aaf47",
       "name": "Check period overlap"
@@ -323,8 +323,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        688,
-        -544
+        672,
+        -592
       ],
       "id": "b7ca8e08-8de6-4c11-94bb-27c276c42404",
       "name": "Report: get sales",
@@ -345,8 +345,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1584,
-        -544
+        1568,
+        -592
       ],
       "id": "b23d473f-793e-4283-a1a7-a75555192fbb",
       "name": "Report: get ytd",
@@ -367,8 +367,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1360,
-        -544
+        1344,
+        -592
       ],
       "id": "8d8bee77-8061-40f5-9c1b-24d18c5b8e9a",
       "name": "Report: get lots",
@@ -382,8 +382,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -832
+        2016,
+        -944
       ],
       "id": "a7d7bde4-a985-48bf-b844-c5abaf6cc796",
       "name": "Build report"
@@ -425,8 +425,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        656,
-        112
+        672,
+        -160
       ],
       "id": "dc99f018-5478-4ac0-8918-ad50df99df12",
       "name": "Is file from me?"
@@ -436,8 +436,8 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        880,
-        208
+        896,
+        -64
       ],
       "id": "661b615b-7aa2-4b9a-8959-5c0b284df00f",
       "name": "Ignore other messages"
@@ -449,8 +449,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1328,
-        16
+        1344,
+        -256
       ],
       "id": "198cf300-4686-44f3-ae4f-dd3230eb87e9",
       "name": "Check if duplicate"
@@ -483,8 +483,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1552,
-        16
+        1568,
+        -256
       ],
       "id": "f5741fba-34b8-49a4-ab9b-809139bf13b5",
       "name": "Already processed?"
@@ -494,8 +494,8 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1776,
-        -80
+        1792,
+        -352
       ],
       "id": "697545bf-8526-4149-8ab4-1a301b36cc10",
       "name": "Skip duplicate file"
@@ -514,8 +514,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1776,
-        192
+        1792,
+        -80
       ],
       "id": "aa93f10f-e4f7-4a11-85d7-1f3574dd80a9",
       "name": "Download file from Telegram"
@@ -548,8 +548,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2448,
-        192
+        2464,
+        -80
       ],
       "id": "952f2de2-7baa-4440-88d5-1aa5cfd6948a",
       "name": "Period overlap?"
@@ -565,12 +565,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2672,
-        96
+        2688,
+        -304
       ],
       "id": "5252f8d8-af67-44a5-9d28-88990dc2207d",
       "name": "Notify period overlap",
-      "webhookId": "4ea7d25d-a233-44aa-aeef-20b8b9fc2a9f"
+      "webhookId": "bc89f696-90ae-4398-9073-27eabac13403"
     },
     {
       "parameters": {
@@ -579,8 +579,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        3792,
-        288
+        3808,
+        16
       ],
       "id": "df2fbef7-bfdf-4f6e-bab0-19a2967baf14",
       "name": "Loop: each missing date"
@@ -599,8 +599,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        4000,
-        304
+        4032,
+        16
       ],
       "id": "db323de5-dda5-4893-8f62-238379bc17a7",
       "name": "Fetch CNB rates"
@@ -661,8 +661,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4416,
-        304
+        4480,
+        96
       ],
       "id": "ce18f512-65f9-4852-a07b-345d1dba075b",
       "name": "Save rate (cnb_rate_cache)"
@@ -827,8 +827,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        4464,
-        -128
+        4480,
+        -416
       ],
       "id": "9d57a537-a961-4101-a9a9-b1d785f49976",
       "name": "Route writes"
@@ -951,8 +951,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        -736
+        4704,
+        -944
       ],
       "id": "234ef9b4-9890-4410-bda1-2fed16391733",
       "name": "Save lot (tax_lots)"
@@ -988,8 +988,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        -544
+        4704,
+        -752
       ],
       "id": "f369f4b8-00b7-4d15-a8f6-ee5c9e2b4adf",
       "name": "Delete sold lot (tax_lots)"
@@ -1081,8 +1081,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        -352
+        4704,
+        -560
       ],
       "id": "0673c7a7-f0a1-4732-afa1-bca36e6516bb",
       "name": "Save year totals (tax_ytd)"
@@ -1209,8 +1209,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        32
+        4704,
+        -176
       ],
       "id": "d554da03-ff83-4060-b8d6-98bacca3a85f",
       "name": "Save sale (tax_sales)"
@@ -1227,12 +1227,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        5168,
-        416
+        4928,
+        208
       ],
       "id": "9fb3d335-188e-4ab8-8a15-313175857b7f",
       "name": "Send import summary",
-      "webhookId": "b5a7f8db-ac54-4356-bde0-e9e4f8c37c4d"
+      "webhookId": "94a137a3-8945-4a9e-9731-7bb72afcc061"
     },
     {
       "parameters": {
@@ -1246,12 +1246,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2464,
-        -640
+        2240,
+        -784
       ],
       "id": "f7d2fcaf-42a0-49dd-9c4e-c2bf1a7ee02f",
       "name": "Send report",
-      "webhookId": "5e81e682-027f-428f-8b83-55bb2558d797"
+      "webhookId": "86eba3d8-9660-4c5b-9f11-5bd00a35e3ee"
     },
     {
       "parameters": {
@@ -1289,8 +1289,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        432,
-        0
+        448,
+        -272
       ],
       "id": "f74dd466-4627-4c24-92d1-da80f76512bf",
       "name": "Is command?"
@@ -1309,8 +1309,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        912,
-        -544
+        896,
+        -592
       ],
       "id": "c313688b-b112-48f7-934a-80c782cb69e1",
       "name": "Report: get rates",
@@ -1324,8 +1324,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -640
+        2016,
+        -752
       ],
       "id": "5ef0fd66-dfc3-4e48-8087-86ba5933b954",
       "name": "Plan sale"
@@ -1474,8 +1474,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        4944,
-        -160
+        4704,
+        -368
       ],
       "id": "de99ad6d-4093-4d64-834b-00fc7ead9822",
       "name": "Save income (tax_income)"
@@ -1494,8 +1494,8 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1136,
-        -544
+        1120,
+        -592
       ],
       "id": "89e801c3-efa5-45c4-a6be-e049975412ea",
       "name": "Report: get income",
@@ -1509,8 +1509,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -448
+        2016,
+        -560
       ],
       "id": "fd022647-b2bb-4924-8a78-92d12a7a0fbf",
       "name": "Build DAP summary"
@@ -1522,8 +1522,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        -256
+        2016,
+        -368
       ],
       "id": "a3c0827b-ac20-46aa-951d-17d7a9ebb6e1",
       "name": "Build export"
@@ -1540,12 +1540,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2384,
-        -256
+        2240,
+        -368
       ],
       "id": "843913fd-0fcb-423e-a79d-43538a82ba60",
       "name": "Send a document",
-      "webhookId": "0ff5fc84-b772-44ad-9311-ad81a686cf4e"
+      "webhookId": "043e877c-d368-4cd4-9bde-44e7484fa6d9"
     },
     {
       "parameters": {
@@ -1678,8 +1678,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1808,
-        -576
+        1792,
+        -640
       ],
       "id": "8dd9fc37-96d4-42cf-8cea-0fd72db9effd",
       "name": "Which command?"
@@ -1689,13 +1689,13 @@
         "assignments": {
           "assignments": [
             {
-              "id": "a4d1b756-02c2-4fda-8598-0246727fa0c1",
+              "id": "349f96e8-deb1-4b0c-868f-db4e9c577733",
               "name": "lang",
               "value": "en",
               "type": "string"
             },
             {
-              "id": "23b93f79-d145-4d9a-a2ce-fb9ae2c68787",
+              "id": "eeb87960-7d12-4404-a67a-94625259becb",
               "name": "telegram_user_id",
               "value": "YOUR_TELEGRAM_USER_ID",
               "type": "string"
@@ -1708,11 +1708,90 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        208,
-        0
+        224,
+        -272
       ],
       "id": "f3ea5e38-4b4e-4ba7-b681-25ed918b35ed",
       "name": "Config"
+    },
+    {
+      "parameters": {
+        "content": "# Commands (/report, /sell, /tax, /export, /help)\nCzech/Ukrainian aliases: /zvit = /report, /dap = /tax",
+        "height": 592,
+        "width": 2368,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -944
+      ],
+      "id": "affd468b-af7d-4806-b610-be23523e76cd",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "# Import & checks (duplicate, period overlap)",
+        "height": 416,
+        "width": 1952
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        640,
+        -320
+      ],
+      "id": "90185a00-604e-499e-8599-49c54272688d",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "# FIFO + 3-year test + ČNB rates",
+        "height": 272,
+        "width": 1280,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2656,
+        -96
+      ],
+      "id": "7a426adf-c86b-46ee-b02d-6129d1647db0",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "# Write results",
+        "height": 1344,
+        "width": 624,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4448,
+        -976
+      ],
+      "id": "727873b5-84a4-4cbe-a05e-c589834b09b3",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## Setup\n1. Config → set **telegram_user_id** (your numeric Telegram ID) and **lang** (en / cs / uk)\n2. Select your Telegram credential in every Telegram node\n3. Select the matching Data Table in every Data Table node\n4. Env var **TELEGRAM_BOT_TOKEN** must be set in n8n\n\nFull guide: README on GitHub",
+        "height": 300,
+        "width": 420,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -276,
+        -152
+      ],
+      "id": "1f1da8a5-035d-40a9-a680-64aedec41806",
+      "name": "Setup note"
     }
   ],
   "connections": {
