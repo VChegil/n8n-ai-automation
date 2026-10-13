@@ -10,6 +10,7 @@ Each workflow demonstrates a different automation pattern — webhook triggers, 
 
 | Workflow | Description | Stack |
 |---|---|---|
+| [🇨🇿 Czech Investment Tax Bot](./n8n-czech-investment-tax-bot) | Telegram bot that calculates Czech taxes on Trading 212 / IBKR investments: FIFO, 3-year test, 100k limit, ČNB rates, tax-return summary | Telegram · n8n Data Tables · ČNB API |
 | [📋 Daily Summary](./daily-summary) | Fetches active ClickUp tasks and generates a structured daily report (Google Doc + email) | ClickUp · Claude · Google Docs · Gmail |
 | [✍️ Content Brief Generator](./content-brief) | Auto-generates a content brief when a tag is added to a ClickUp task | ClickUp Webhook · Claude · Google Docs |
 
