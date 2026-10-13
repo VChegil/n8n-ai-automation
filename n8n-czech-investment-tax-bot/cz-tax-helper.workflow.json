@@ -1,0 +1,2227 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b2622e7e-5978-4501-a4d7-fdb4b5f2be20",
+      "name": "Telegram Trigger",
+      "webhookId": "7ad9f23c-1dd7-4080-9413-25f535f8425f"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.document.file_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        16
+      ],
+      "id": "27be1cc2-ba14-49c2-bf13-4f2daf2fd0b0",
+      "name": "Get a file",
+      "webhookId": "d3d97da8-2443-4c16-ac45-6b0bd6056b2d"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_lots"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2672,
+        288
+      ],
+      "id": "ad97eb52-75b0-4939-8346-e9ebe3394e0c",
+      "name": "Get existing lots",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"FIFO Match + Time Test\"\n// Mode: Run Once for All Items\n// Reads:  $('Parse Import').all()       -> new transactions from this file\n//         $('Get existing lots').all()  -> ALL rows of Data Table \"tax_lots\" (Return All = ON!)\n// Output items tagged with _op for the Switch node:\n//   lot_upsert  -> tax_lots Upsert (match broker + ident + purchase_date, ALL conditions)\n//   lot_delete  -> tax_lots Delete (match broker + ident + purchase_date, ALL conditions)\n//   sale / dividend / withholding -> CZK conversion branch\n//\n// One lot = one (broker, ident, purchase_date). Several buys on the same day are merged\n// into one lot, because the Data Table key can't tell them apart anyway.\n\nconst newTx = $('Parse Import').all().map(i => i.json);\n// De-duplicate: a Data Table \"Get\" node runs once per incoming item, so the same rows can\n// arrive many times. Each lot row must be used once.\nconst seenLots = new Set();\nconst existingLots = $('Get existing lots').all().map(i => i.json)\n  .filter(l => l.ident && l.purchase_date && Number(l.qty_remaining) > 0)\n  .filter(l => {\n    const k = l.id != null ? `id:${l.id}` : `${l.broker}|${l.ident}|${l.purchase_date}`;\n    if (seenLots.has(k)) return false;\n    seenLots.add(k);\n    return true;\n  });\n\nfunction timeTestOk(purchaseDate, sellDate) {\n  const p = new Date(purchaseDate), s = new Date(sellDate);\n  const threshold = new Date(p); threshold.setFullYear(p.getFullYear() + 3);\n  return s >= threshold;\n}\n\nconst key = (broker, ident) => `${broker}|${ident}`;\nconst groups = {};\nconst group = (broker, ident) => (groups[key(broker, ident)] ||= { broker, ident, lots: [], events: [] });\n\nfor (const l of existingLots) {\n  group(l.broker, l.ident).lots.push({\n    inDb: true, qty: Number(l.qty_remaining), date: l.purchase_date,\n    cost: Number(l.cost_native), currency: l.currency, ticker: l.ticker, touched: false,\n  });\n}\nfor (const tx of newTx) {\n  if (!['buy', 'sell', 'split_close', 'split_open'].includes(tx.kind)) continue;\n  group(tx.broker, tx.ident).events.push(tx);\n}\n\nconst results = [];\nconst errors = [];\n\nfor (const g of Object.values(groups)) {\n  const queue = g.lots.sort((a, b) => a.date.localeCompare(b.date));\n  g.events.sort((a, b) => a.date.localeCompare(b.date)); // stable: same-day order from the file is kept\n  const deleted = [];\n  let pendingSplit = null;\n\n  function addLot(lot) {\n    const same = queue.find(q => q.date === lot.date && q.currency === lot.currency);\n    if (same) { same.qty += lot.qty; same.cost += lot.cost; same.touched = true; return; }\n    queue.push({ ...lot, touched: true });\n    queue.sort((a, b) => a.date.localeCompare(b.date));\n  }\n\n  function consume(qty) {\n    let need = qty; const used = [];\n    while (need > 1e-9 && queue.length) {\n      const lot = queue[0];\n      const take = Math.min(lot.qty, need);\n      const part = (lot.cost / lot.qty) * take;\n      used.push({ date: lot.date, qty: take, cost: part, currency: lot.currency });\n      lot.qty -= take; lot.cost -= part; lot.touched = true; need -= take;\n      if (lot.qty <= 1e-9) { queue.shift(); if (lot.inDb) deleted.push(lot); }\n    }\n    return { used, missing: need > 1e-6 ? need : 0 };\n  }\n\n  for (const ev of g.events) {\n    if (ev.kind === 'buy') {\n      addLot({ qty: ev.qty, date: ev.date, cost: ev.amount, currency: ev.currency, ticker: ev.ticker });\n    } else if (ev.kind === 'split_close') {\n      const { used, missing } = consume(ev.qty);\n      if (missing) errors.push(`${g.broker} ${ev.ticker}: split ${ev.date} needs ${ev.qty}, missing ${missing.toFixed(6)} shares`);\n      pendingSplit = used;\n    } else if (ev.kind === 'split_open') {\n      const used = pendingSplit || [];\n      const cost = used.reduce((s, c) => s + c.cost, 0);\n      const earliest = used.length ? used.map(u => u.date).sort()[0] : ev.date;\n      addLot({ qty: ev.qty, date: earliest, cost, currency: used[0]?.currency || ev.currency, ticker: ev.ticker });\n      pendingSplit = null;\n    } else if (ev.kind === 'sell') {\n      const { used, missing } = consume(ev.qty);\n      if (missing) {\n        errors.push(`${g.broker} ${ev.ticker}: sell ${ev.date} of ${ev.qty} shares, only ${(ev.qty - missing).toFixed(6)} found in tax_lots`);\n        continue;\n      }\n      for (const u of used) {\n        results.push({ json: {\n          _op: 'sale', year: Number(ev.date.slice(0, 4)), broker: g.broker, ticker: ev.ticker,\n          sell_date: ev.date, purchase_date: u.date, qty: u.qty,\n          cost_native: u.cost, cost_currency: u.currency,\n          proceeds_native: ev.amount * (u.qty / ev.qty), proceeds_currency: ev.currency,\n          fee_native: (ev.fee || 0) * (u.qty / ev.qty),   // sell commission / FX fee, same currency as proceeds\n          time_test_passed: timeTestOk(u.date, ev.date),\n        }});\n      }\n    }\n  }\n\n  for (const lot of deleted) {\n    results.push({ json: { _op: 'lot_delete', broker: g.broker, ident: g.ident, purchase_date: lot.date } });\n  }\n  for (const lot of queue) {\n    if (lot.touched && lot.qty > 1e-9) {\n      results.push({ json: {\n        _op: 'lot_upsert', broker: g.broker, ident: g.ident, ticker: lot.ticker,\n        purchase_date: lot.date, qty_remaining: lot.qty, cost_native: lot.cost, currency: lot.currency,\n      }});\n    }\n  }\n}\n\nif (errors.length) {\n  throw new Error(\n    'Not enough purchase lots for some sells - nothing was written. Check that \"Get existing lots\" ' +\n    'has Return All ON and that older files were imported first.\\n' + errors.join('\\n')\n  );\n}\n\nfor (const tx of newTx) {\n  if (tx.kind === 'dividend') results.push({ json: { _op: 'dividend', ...tx } });\n  if (tx.kind === 'withholding') results.push({ json: { _op: 'withholding', ...tx } });\n  if (tx.kind === 'interest') results.push({ json: { _op: 'interest', ...tx } });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2896,
+        288
+      ],
+      "id": "f6abf13f-55b8-4a16-be19-c7847b1b9843",
+      "name": "FIFO Match + Time Test"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Parse Import\"\n// Mode: Run Once for All Items (required for `this.helpers`)\n// Input: 1 item with binary.data = downloaded CSV file (T212 export OR IBKR Activity Statement)\n// Output: array of normalized transaction items\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nlet text = buffer.toString('utf-8');\ntext = text.replace(/^﻿/, ''); // strip UTF-8 BOM that T212/IBKR exports often start with\nconst lines = text.split(/\\r?\\n/).filter(l => l.trim().length > 0);\n\nconst out = [];\nconst unknown = {};   // rows the bot does not understand -> shown as a warning in Telegram\n\nfunction parseCsvLine(line) {\n  const vals = [];\n  let cur = '', inQ = false;\n  for (let i = 0; i < line.length; i++) {\n    const c = line[i];\n    if (c === '\"') { inQ = !inQ; continue; }\n    if (c === ',' && !inQ) { vals.push(cur); cur = ''; continue; }\n    cur += c;\n  }\n  vals.push(cur);\n  return vals;\n}\n\nif (lines[0].includes('Action,Time')) {\n  // ---- Trading 212 export ----\n  const header = parseCsvLine(lines[0]);\n  const idx = name => header.indexOf(name);\n  const interestByMonth = {};\n  const BUY = /^(market|limit|stop|stop limit) buy$/i;\n  const SELL = /^(market|limit|stop|stop limit) sell$/i;\n  // rows that carry no taxable event\n  const IGNORE = new Set(['Deposit', 'Withdrawal', 'Currency conversion', 'Card debit', 'Card credit']);\n  for (let i = 1; i < lines.length; i++) {\n    const v = parseCsvLine(lines[i]);\n    const action = v[idx('Action')];\n    const ident = v[idx('ISIN')] || v[idx('Ticker')];\n    const ticker = v[idx('Ticker')];\n    const date = (v[idx('Time (UTC)')] || '').split(' ')[0];\n    const shares = parseFloat(v[idx('No. of shares')]) || 0;\n    const result = v[idx('Result')] ? parseFloat(v[idx('Result')]) : null;\n    const total = parseFloat(v[idx('Total')]) || 0;\n    const totalCurr = v[idx('Currency (Total)')];\n    const whTax = parseFloat(v[idx('Withholding tax')]) || 0;\n    const whCurr = v[idx('Currency (Withholding tax)')];\n    const fxFee = idx('Currency conversion fee') >= 0 ? (parseFloat(v[idx('Currency conversion fee')]) || 0) : 0;\n    const rec = { broker: 'T212', ident, ticker, isin: v[idx('ISIN')] || '', date, qty: shares, amount: total,\n                  currency: totalCurr, wh_tax: whTax, wh_curr: whCurr, result };\n    if (BUY.test(action)) {\n      out.push({ ...rec, kind: 'buy' });                       // Total already includes the FX fee\n    } else if (SELL.test(action)) {\n      // Total = proceeds AFTER the FX fee -> revenue is Total + fee, the fee is a deductible cost\n      out.push({ ...rec, kind: 'sell', amount: total + fxFee, fee: fxFee });\n    } else if (action.startsWith('Dividend') && !/return of capital/i.test(action)) {\n      out.push({ ...rec, kind: 'dividend' });\n    } else if (action === 'Stock split close') {\n      out.push({ ...rec, kind: 'split_close' });\n    } else if (action === 'Stock split open') {\n      out.push({ ...rec, kind: 'split_open' });\n    } else if (action === 'Custom stock distribution') {\n      out.push({ ...rec, kind: 'buy' });                       // received shares, cost = Total (usually 0)\n    } else if (action === 'Interest on cash' || action === 'Lending interest') {\n      // daily tiny amounts -> summed per month (see below)\n      const key = `${date.slice(0, 7)}|${totalCurr}`;\n      const m = (interestByMonth[key] ||= { amount: 0, date, currency: totalCurr });\n      m.amount += total;\n      if (date > m.date) m.date = date;\n    } else if (!IGNORE.has(action)) {\n      unknown[`T212: ${action}`] = (unknown[`T212: ${action}`] || 0) + 1;\n    }\n  }\n  // Interest: one record per month, dated on the last interest day of that month\n  for (const m of Object.values(interestByMonth)) {\n    out.push({ broker: 'T212', ident: 'CASH', ticker: 'CASH', date: m.date,\n               amount: Math.round(m.amount * 100) / 100, currency: m.currency, kind: 'interest' });\n  }\n} else if (lines[0].includes('Statement,Header')) {\n  // ---- IBKR Activity Statement ----\n  const WATCH = new Set(['Corporate Actions', 'Transfers', 'Option Exercises', 'Bond Interest Received']);\n  for (const line of lines) {\n    const v = parseCsvLine(line);\n    const section = v[0], rtype = v[1];\n    if (section === 'Trades' && rtype === 'Data' && v[3] === 'Stocks' && v.length >= 15) {\n      const currency = v[4], symbol = v[5];\n      const date = (v[6] || '').split(',')[0].trim();\n      const qty = parseFloat(v[7]);\n      const proceeds = parseFloat(v[10]) || 0;\n      const comm = Math.abs(parseFloat(v[11]) || 0);\n      const basis = parseFloat(v[12]) || 0;               // buys: price + commission\n      const realizedPl = parseFloat(v[13]) || 0;\n      if (qty > 0) {\n        out.push({ broker: 'IBKR', ident: symbol, ticker: symbol, date, qty,\n                   amount: basis, currency, kind: 'buy' });\n      } else {\n        out.push({ broker: 'IBKR', ident: symbol, ticker: symbol, date, qty: -qty,\n                   amount: proceeds, fee: comm, currency, kind: 'sell', result: realizedPl });\n      }\n    } else if (section === 'Trades' && rtype === 'Data' && v[3] && v[3] !== 'Stocks' && v[3] !== 'Forex') {\n      unknown[`IBKR Trades: ${v[3]}`] = (unknown[`IBKR Trades: ${v[3]}`] || 0) + 1;\n    } else if (section === 'Dividends' && rtype === 'Data' && v.length >= 6 && !String(v[2]).startsWith('Total')) {\n      const m = v[4].match(/^([A-Z0-9.]+)\\(/), isin = (v[4].match(/\\(([A-Z]{2}[A-Z0-9]{9}\\d)\\)/) || [])[1] || '';\n      out.push({ broker: 'IBKR', ident: m ? m[1] : v[4], ticker: m ? m[1] : v[4], isin,\n                 date: v[3], amount: parseFloat(v[5]) || 0, currency: v[2], kind: 'dividend' });\n    } else if (section === 'Withholding Tax' && rtype === 'Data' && v.length >= 6 && !String(v[2]).startsWith('Total')) {\n      const m = v[4].match(/^([A-Z0-9.]+)\\(/), isin = (v[4].match(/\\(([A-Z]{2}[A-Z0-9]{9}\\d)\\)/) || [])[1] || '';\n      out.push({ broker: 'IBKR', ident: m ? m[1] : v[4], ticker: m ? m[1] : v[4], isin,\n                 date: v[3], amount: parseFloat(v[5]) || 0, currency: v[2], kind: 'withholding' });\n    } else if (section === 'Interest' && rtype === 'Data' && v.length >= 6 && !String(v[2]).startsWith('Total')) {\n      out.push({ broker: 'IBKR', ident: 'CASH', ticker: 'CASH', date: v[3],\n                 amount: parseFloat(v[5]) || 0, currency: v[2], kind: 'interest' });\n    } else if (WATCH.has(section) && rtype === 'Data' && !String(v[2]).startsWith('Total')) {\n      unknown[`IBKR: ${section}`] = (unknown[`IBKR: ${section}`] || 0) + 1;\n    }\n  }\n} else {\n  const preview = JSON.stringify(lines[0] || '').slice(0, 200);\n  throw new Error(`Unrecognized file format. First line preview: ${preview}`);\n}\n\n// Splits that the T212 export does NOT contain as \"Stock split\" rows.\n// Quantities traded before the split date are scaled so they match post-split shares;\n// money amounts stay the same, so cost basis and purchase dates are unchanged.\nconst MISSING_SPLITS = [\n  { broker: 'T212', ident: 'US67066G1040', date: '2024-06-10', ratio: 10 }, // NVIDIA 10:1\n];\nfor (const s of MISSING_SPLITS) {\n  const fileHasSplit = out.some(r => r.broker === s.broker && r.ident === s.ident && r.kind.startsWith('split'));\n  if (fileHasSplit) continue;\n  for (const r of out) {\n    if (r.broker === s.broker && r.ident === s.ident && r.date < s.date && (r.kind === 'buy' || r.kind === 'sell')) {\n      r.qty = r.qty * s.ratio;\n    }\n  }\n}\n\n// ---- Period covered by this file (used by \"Check period overlap\") ----\nconst MONTHS = { January: '01', February: '02', March: '03', April: '04', May: '05', June: '06',\n  July: '07', August: '08', September: '09', October: '10', November: '11', December: '12' };\nconst toIso = s => { const m = s.match(/([A-Za-z]+) (\\d{1,2}), (\\d{4})/); return m ? `${m[3]}-${MONTHS[m[1]]}-${m[2].padStart(2, '0')}` : null; };\nconst broker = lines[0].includes('Action,Time') ? 'T212' : 'IBKR';\nlet periodFrom = null, periodTo = null, periodSource = 'transactions';\nif (broker === 'IBKR') {\n  const p = lines.find(l => l.startsWith('Statement,Data,Period,'));\n  if (p) {\n    const [a, b] = parseCsvLine(p)[3].split(' - ');\n    periodFrom = toIso(a); periodTo = toIso(b || a); periodSource = 'statement';\n  }\n} else {\n  let fileName = '';\n  try { fileName = $('Telegram Trigger').first().json.message.document.file_name || ''; } catch (e) {}\n  const m = fileName.match(/from_(\\d{4}-\\d{2}-\\d{2})_to_(\\d{4}-\\d{2}-\\d{2})/);\n  if (m) { periodFrom = m[1]; periodTo = m[2]; periodSource = 'file name'; }\n}\nif (!periodFrom || !periodTo) {\n  const dates = out.map(r => r.date).filter(Boolean).sort();\n  periodFrom = dates[0] || null; periodTo = dates[dates.length - 1] || null;\n}\nout.unshift({ kind: 'meta', broker, period_from: periodFrom, period_to: periodTo, period_source: periodSource, unknown });\n\nreturn out.map(rec => ({ json: rec }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        192
+      ],
+      "id": "27154e94-9e29-49ad-a733-b77ef76c36d3",
+      "name": "Parse Import"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_ytd"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3120,
+        288
+      ],
+      "id": "0a8bd7e6-723e-464f-9a31-39b4343ce952",
+      "name": "Get YTD row",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "cnb_rate_cache"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3344,
+        288
+      ],
+      "id": "d6bced62-8efa-4575-937d-2b96e750e9a0",
+      "name": "Get rate cache",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Collect dates needing CNB rate\"\n// Place right after \"FIFO Match + Time Test\". Looks at sale/dividend/withholding items,\n// finds every (date, currency) it will need to convert, and checks which are\n// NOT already in the \"cnb_rate_cache\" Data Table -- those get fetched.\n\nconst events = $('FIFO Match + Time Test').all().map(i => i.json)\n  .filter(e => ['sale', 'dividend', 'withholding', 'interest'].includes(e._op));\nconst cached = $('Get rate cache').all().map(i => i.json);\nconst cachedKeys = new Set(cached.map(r => `${r.date}|${r.currency}`));\n\nconst needed = new Map(); // key -> {date, currency}\nfunction add(date, currency) {\n  if (!date || !currency || currency === 'CZK') return;\n  const key = `${date}|${currency}`;\n  if (!cachedKeys.has(key)) needed.set(key, { date, currency });\n}\n\nfor (const ev of events) {\n  if (ev._op === 'sale') {\n    add(ev.sell_date, ev.proceeds_currency);\n    add(ev.purchase_date, ev.cost_currency);\n  } else {\n    add(ev.date, ev.currency);\n    if (ev.wh_tax && ev.wh_curr) add(ev.date, ev.wh_curr); // T212 dividend withholding currency\n  }\n}\n\n// one item per DATE (not per currency) -- the CNB daily file returns all currencies at once\nconst byDate = new Map();\nfor (const { date } of needed.values()) {\n  if (!byDate.has(date)) {\n    const [y, m, d] = date.split('-');\n    byDate.set(date, { date, cnb_date_param: `${d}.${m}.${y}` });\n  }\n}\n\n// Never return zero items: an empty output would stop the workflow here (no YTD update,\n// no Telegram message, lots never written). If every rate is already cached, fetch\n// today's rates once instead - harmless, and the loop runs through to the end.\nif (byDate.size === 0) {\n  const today = new Date().toISOString().slice(0, 10);\n  const [y, m, d] = today.split('-');\n  byDate.set(today, { date: today, cnb_date_param: `${d}.${m}.${y}` });\n}\n\nreturn [...byDate.values()].map(j => ({ json: j }));\n// -> feed into a \"Split In Batches\" (size 1) + HTTP Request node:\n//    GET https://www.cnb.cz/cs/financni-trhy/devizovy-trh/kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt?date={{$json.cnb_date_param}}\n//    Response Format: Text\n//    then a Code node \"Parse CNB response\" (next file) -> Data Table \"cnb_rate_cache\" Insert row"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3568,
+        288
+      ],
+      "id": "ff41b18b-b496-4147-b110-a46cd74a5c95",
+      "name": "Collect dates needing CNB rate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Parse CNB response\"\n// Place right after the HTTP Request node that fetched denni_kurz.txt for ONE date.\n// Input item carries both the HTTP response body (text) and the original date\n// (use $('Collect dates needing CNB rate').item.json.date if the HTTP node loses it,\n// or just read $json.data / $json.body depending on your n8n version's HTTP Request output field).\n\nconst body = $json.data || $json.body || $json;\nconst text = typeof body === 'string' ? body : JSON.stringify(body);\nconst lines = text.split(/\\r?\\n/);\n// format:  COUNTRY|CURRENCY_NAME|AMOUNT|CODE|RATE   e.g.  EMU|euro|1|EUR|24,275\nconst date = $('Collect dates needing CNB rate').item.json.date; // YYYY-MM-DD\n\nconst out = [];\nfor (const line of lines) {\n  const parts = line.split('|');\n  if (parts.length !== 5) continue;\n  const [, , amount, code, rateStr] = parts;\n  const rate = parseFloat(rateStr.replace(',', '.')) / parseFloat(amount);\n  if (['EUR', 'USD', 'GBP'].includes(code)) { // extend this list if you trade other currencies\n    out.push({ json: { date, currency: code, rate } });\n  }\n}\nreturn out;\n// -> wire straight into Data Table \"cnb_rate_cache\": Insert row"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4208,
+        304
+      ],
+      "id": "9dcb5f68-9505-40b5-a369-47e06ab343de",
+      "name": "Parse CNB response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"To CZK + Update YTD\"\n// Reads: $('FIFO Match + Time Test').all()  sale / dividend / withholding items\n//        $('Get rate cache final').all()    {date, currency, rate}  (Return All = ON)\n//        $('Get YTD row').all()             tax_ytd rows             (Return All = ON)\n// tax_ytd columns: year, sales_revenue_czk, dividend_czk, withholding_czk, interest_czk\n// Output (all writes happen after this node, in Switch1):\n//   _op 'lot_upsert' / 'lot_delete'  passed through from FIFO     -> tax_lots Upsert / Delete\n//   one  _op 'ytd_upsert'      per tax year touched by this file  -> tax_ytd Upsert (match year)\n//   many _op 'sale_detail'                                        -> tax_sales Insert\n//   many _op 'income_detail'  dividends / withholding / interest  -> tax_income Insert\n//   one  _op 'telegram_summary'                                   -> Build Telegram Summary + Mark file processed\n//\n// Every event is booked to the year of ITS OWN date (IBKR statements contain withholding\n// corrections for the previous year).\n// Dividends are booked GROSS: IBKR dividend rows are already gross; T212 \"Total\" is net\n// (after US withholding), so the T212 withholding (wh_tax / wh_curr) is added back.\n// withholding_czk is stored as a negative number (tax paid abroad; refunds are positive).\n\nconst events = $('FIFO Match + Time Test').all().map(i => i.json)\n  .filter(e => ['sale', 'dividend', 'withholding', 'interest'].includes(e._op));\n\nconst rateMap = {};\nfor (const r of $('Get rate cache final').all().map(i => i.json)) {\n  (rateMap[r.date] ||= {})[r.currency] = Number(r.rate);\n}\nfunction rate(date, currency) {\n  if (currency === 'CZK') return 1;\n  const r = rateMap[date]?.[currency];\n  if (r === undefined) throw new Error(`Missing CNB rate for ${currency} on ${date} -- fetch it first`);\n  return r;\n}\n\nconst years = {};\nconst Y = y => (years[y] ||= { revenue: 0, gain: 0, dividend: 0, withholding: 0, interest: 0, sales: 0 });\nconst saleDetails = [];\nconst income = [];   // one row per dividend / withholding / interest -> tax_income\nconst r2 = n => Math.round(n * 100) / 100;\nfunction incomeRow(year, ev, type, amount, currency, czk, note) {\n  const isin = ev.isin || '';\n  return { _op: 'income_detail', year, broker: ev.broker, type, ticker: ev.ticker || '', isin,\n           country: isin ? isin.slice(0, 2) : '', date: ev.date, amount: r2(amount), currency,\n           amount_czk: r2(czk), note };\n}\n\nfor (const ev of events) {\n  if (ev._op === 'sale') {\n    const y = Y(Number(ev.sell_date.slice(0, 4)));\n    const proceeds = ev.proceeds_native * rate(ev.sell_date, ev.proceeds_currency);\n    // cost = purchase price (incl. buy fees) + fees paid on the sale\n    const cost = ev.cost_native * rate(ev.purchase_date, ev.cost_currency)\n               + (ev.fee_native || 0) * rate(ev.sell_date, ev.proceeds_currency);\n    y.revenue += proceeds; y.gain += proceeds - cost; y.sales += 1;\n    saleDetails.push({ ...ev, proceeds_czk: proceeds, cost_czk: cost, gain_czk: proceeds - cost });\n  } else if (ev._op === 'dividend') {\n    const yr = Number(ev.date.slice(0, 4)), y = Y(yr);\n    const r = rate(ev.date, ev.currency);\n    let gross = ev.amount * r;\n    if (ev.wh_tax && ev.wh_curr) {                    // T212: Total is net -> add back tax withheld abroad\n      const wh = Math.abs(ev.wh_tax) * rate(ev.date, ev.wh_curr);\n      gross += wh;\n      y.withholding -= wh;\n      income.push(incomeRow(yr, ev, 'withholding', -Math.abs(ev.wh_tax), ev.wh_curr, -wh, ''));\n    }\n    y.dividend += gross;\n    income.push(incomeRow(yr, ev, 'dividend', ev.amount, ev.currency, gross,\n      ev.wh_tax ? 'T212: amount = net; amount_czk = gross (net + withholding)' : ''));\n  } else if (ev._op === 'interest') {                // interest on cash (T212 summed per month)\n    const yr = Number(ev.date.slice(0, 4)), czk = ev.amount * rate(ev.date, ev.currency);\n    Y(yr).interest += czk;\n    income.push(incomeRow(yr, ev, 'interest', ev.amount, ev.currency, czk, ev.broker === 'T212' ? 'monthly sum' : ''));\n  } else if (ev._op === 'withholding') {             // IBKR: negative = paid, positive = refund\n    const yr = Number(ev.date.slice(0, 4)), czk = ev.amount * rate(ev.date, ev.currency);\n    Y(yr).withholding += czk;\n    income.push(incomeRow(yr, ev, 'withholding', ev.amount, ev.currency, czk, ''));\n  }\n}\n\nconst ytdRows = $('Get YTD row').all().map(i => i.json).filter(r => r.year);\nconst THRESHOLD = 100000;\nconst round = n => Math.round(n);\nconst out = [];\nconst yearSummaries = [];\n\nfor (const yr of Object.keys(years).map(Number).sort()) {\n  const t = years[yr];\n  const ex = ytdRows.find(r => Number(r.year) === yr) || {};\n  const ytd = {\n    year: yr,\n    sales_revenue_czk: Number(ex.sales_revenue_czk || 0) + t.revenue,\n    dividend_czk: Number(ex.dividend_czk || 0) + t.dividend,\n    withholding_czk: Number(ex.withholding_czk || 0) + t.withholding,\n    interest_czk: Number(ex.interest_czk || 0) + t.interest,\n  };\n  out.push({ json: { _op: 'ytd_upsert', ...ytd } });\n  yearSummaries.push({\n    year: yr,\n    sales_count: t.sales,\n    this_import_revenue_czk: round(t.revenue),\n    this_import_gain_czk: round(t.gain),\n    this_import_dividend_czk: round(t.dividend),\n    this_import_withholding_czk: round(t.withholding),\n    this_import_interest_czk: round(t.interest),\n    ytd_revenue_czk: round(ytd.sales_revenue_czk),\n    ytd_dividend_czk: round(ytd.dividend_czk),\n    ytd_withholding_czk: round(ytd.withholding_czk),\n    ytd_interest_czk: round(ytd.interest_czk),\n    ytd_remaining_to_100k: round(THRESHOLD - ytd.sales_revenue_czk),\n    exemption_still_possible: ytd.sales_revenue_czk <= THRESHOLD,\n  });\n}\n\nconst meta = $('Parse Import').all().map(i => i.json).find(r => r.kind === 'meta') || {};\nout.push({ json: {\n  _op: 'telegram_summary',\n  unknown: meta.unknown || {},\n  years: yearSummaries,\n  sales: saleDetails.map(s => ({\n    ticker: s.ticker, bought: s.purchase_date, sold: s.sell_date,\n    gain_czk: round(s.gain_czk), time_test_passed: s.time_test_passed,\n  })),\n}});\n\n// Lot changes from FIFO are passed through and written LAST (via Switch1), so nothing is\n// written to tax_lots unless the whole CZK calculation succeeded.\nfor (const i of $('FIFO Match + Time Test').all()) {\n  if (i.json._op === 'lot_upsert' || i.json._op === 'lot_delete') out.push({ json: i.json });\n}\n\nfor (const row of income) out.push({ json: row });\n\nfor (const s of saleDetails) {\n  out.push({ json: {\n    _op: 'sale_detail',\n    year: s.year, broker: s.broker, ticker: s.ticker,\n    sell_date: s.sell_date, purchase_date: s.purchase_date, qty: s.qty,\n    cost_czk: Math.round(s.cost_czk * 100) / 100,\n    proceeds_czk: Math.round(s.proceeds_czk * 100) / 100,\n    time_test_passed: s.time_test_passed,\n  }});\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4240,
+        -64
+      ],
+      "id": "a060c674-efee-4add-bda6-a2924f57eb91",
+      "name": "To CZK + Update YTD"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "cnb_rate_cache"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4016,
+        -64
+      ],
+      "id": "5d87fa3e-6550-44bf-8b5c-72a8b2181e17",
+      "name": "Get rate cache final",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Build Telegram Summary\"\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\nconst T = {\n  en: {\n    title: '📊 <b>Import processed</b>',\n    sales: n => `💰 <b>Sales in this file (${n}):</b>`,\n    passed: '✅ 3+ years',\n    more: n => `… and ${n} more (full list in tax_sales)`,\n    fileSales: (r, g) => `Sales in this file: proceeds ${r} CZK, gain ${g} CZK`,\n    fileDiv: v => `Dividends (gross) in this file: ${v} CZK`,\n    fileWh: v => `Tax withheld abroad: ${v} CZK`,\n    fileInt: v => `Interest in this file: ${v} CZK`,\n    ytd: v => `Year to date: sales proceeds <b>${v}</b> / 100 000 CZK`,\n    left: v => ` — ${v} CZK left\\n`,\n    over: y => ` — ⚠️ <b>limit exceeded</b>, gains for ${y} are taxable\\n`,\n    ytdDiv: (d, w) => `Dividends YTD: ${d} CZK, withheld: ${w} CZK`,\n    ytdInt: v => `, interest: ${v} CZK\\n`,\n    unknown: '⚠️ <b>Rows the bot did not process:</b>',\n    unknownHint: 'Check whether they affect your tax.',\n    cut: '… message truncated.',\n  },\n  uk: {\n    title: '📊 <b>Імпорт обробено</b>',\n    sales: n => `💰 <b>Продажі в цьому файлі (${n}):</b>`,\n    passed: '✅ 3+ роки',\n    more: n => `… і ще ${n} (повний список — у tax_sales)`,\n    fileSales: (r, g) => `Продажі в цьому файлі: виручка ${r} CZK, прибуток ${g} CZK`,\n    fileDiv: v => `Дивіденди (брутто) в цьому файлі: ${v} CZK`,\n    fileWh: v => `Утриманий податок за кордоном: ${v} CZK`,\n    fileInt: v => `Проценти на залишок у цьому файлі: ${v} CZK`,\n    ytd: v => `Разом за рік: виручка з продажів <b>${v}</b> / 100 000 CZK`,\n    left: v => ` — залишилось ${v} CZK\\n`,\n    over: y => ` — ⚠️ <b>ліміт перевищено</b>, прибуток за ${y} оподатковується\\n`,\n    ytdDiv: (d, w) => `Дивіденди за рік: ${d} CZK, утримано: ${w} CZK`,\n    ytdInt: v => `, проценти: ${v} CZK\\n`,\n    unknown: '⚠️ <b>Рядки, які бот не врахував:</b>',\n    unknownHint: 'Перевір, чи вони впливають на податок.',\n    cut: '… повідомлення обрізано.',\n  },\n  cs: {\n    title: '📊 <b>Import zpracován</b>',\n    sales: n => `💰 <b>Prodeje v tomto souboru (${n}):</b>`,\n    passed: '✅ 3+ roky',\n    more: n => `… a dalších ${n} (celý seznam v tax_sales)`,\n    fileSales: (r, g) => `Prodeje v tomto souboru: příjmy ${r} CZK, zisk ${g} CZK`,\n    fileDiv: v => `Dividendy (hrubé) v tomto souboru: ${v} CZK`,\n    fileWh: v => `Daň sražená v zahraničí: ${v} CZK`,\n    fileInt: v => `Úroky v tomto souboru: ${v} CZK`,\n    ytd: v => `Od začátku roku: příjmy z prodejů <b>${v}</b> / 100 000 CZK`,\n    left: v => ` — zbývá ${v} CZK\\n`,\n    over: y => ` — ⚠️ <b>limit překročen</b>, zisky za ${y} podléhají dani\\n`,\n    ytdDiv: (d, w) => `Dividendy za rok: ${d} CZK, sraženo: ${w} CZK`,\n    ytdInt: v => `, úroky: ${v} CZK\\n`,\n    unknown: '⚠️ <b>Řádky, které bot nezpracoval:</b>',\n    unknownHint: 'Zkontrolujte, zda ovlivňují daň.',\n    cut: '… zpráva zkrácena.',\n  },\n}[LANG];\n\nconst s = $input.first().json; // the 'telegram_summary' item\nconst fmt = n => Number(n).toLocaleString('cs-CZ');\n\nlet msg = `${T.title}\\n`;\n\nconst MAX_SALES_SHOWN = 25;\nif (s.sales.length) {\n  msg += `\\n${T.sales(s.sales.length)}\\n`;\n  for (const sale of s.sales.slice(0, MAX_SALES_SHOWN)) {\n    const flag = sale.time_test_passed ? T.passed : '⚠️';\n    msg += `• ${sale.ticker}: ${sale.bought} → ${sale.sold}, ${fmt(sale.gain_czk)} CZK ${flag}\\n`;\n  }\n  if (s.sales.length > MAX_SALES_SHOWN) msg += T.more(s.sales.length - MAX_SALES_SHOWN) + '\\n';\n}\n\nfor (const y of s.years) {\n  msg += `\\n📅 <b>${y.year}</b>\\n`;\n  if (y.sales_count) msg += T.fileSales(fmt(y.this_import_revenue_czk), fmt(y.this_import_gain_czk)) + '\\n';\n  if (y.this_import_dividend_czk) msg += T.fileDiv(fmt(y.this_import_dividend_czk)) + '\\n';\n  if (y.this_import_withholding_czk) msg += T.fileWh(fmt(y.this_import_withholding_czk)) + '\\n';\n  if (y.this_import_interest_czk) msg += T.fileInt(fmt(y.this_import_interest_czk)) + '\\n';\n  msg += T.ytd(fmt(y.ytd_revenue_czk));\n  msg += y.exemption_still_possible ? T.left(fmt(y.ytd_remaining_to_100k)) : T.over(y.year);\n  msg += T.ytdDiv(fmt(y.ytd_dividend_czk), fmt(y.ytd_withholding_czk));\n  msg += y.ytd_interest_czk ? T.ytdInt(fmt(y.ytd_interest_czk)) : `\\n`;\n}\n\nconst unknown = Object.entries(s.unknown || {});\nif (unknown.length) {\n  msg += `\\n${T.unknown}\\n`;\n  for (const [what, n] of unknown) msg += `• ${what.replace(/</g, '&lt;')} — ${n}\\n`;\n  msg += T.unknownHint + '\\n';\n}\n\nconst TELEGRAM_LIMIT = 4096;\nif (msg.length > TELEGRAM_LIMIT) msg = msg.slice(0, TELEGRAM_LIMIT - 60) + '\\n\\n' + T.cut;\n\nreturn [{ json: { text: msg } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4944,
+        416
+      ],
+      "id": "dfa331d4-2f6b-4da2-bc53-f2c878951dfb",
+      "name": "Build Telegram Summary"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "FILE_UNIQUE_CZ_TAX"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        16
+      ],
+      "id": "f6d89f19-6c75-49e8-b8d4-d4c469c6df50",
+      "name": "Check processed files",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "FILE_UNIQUE_CZ_TAX"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "file_unique_id": "={{ $('Get a file').first().json.result.file_unique_id }}",
+            "broker": "={{ $('Check period overlap').first().json.broker }}",
+            "period_from": "={{ $('Check period overlap').first().json.period_from }}",
+            "period_to": "={{ $('Check period overlap').first().json.period_to }}"
+          },
+          "matchingColumns": [
+            "file_unique_id"
+          ],
+          "schema": [
+            {
+              "id": "file_unique_id",
+              "displayName": "file_unique_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "broker",
+              "displayName": "broker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "period_from",
+              "displayName": "period_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "period_to",
+              "displayName": "period_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        224
+      ],
+      "id": "225e3983-18ee-403f-9935-25453ef02d09",
+      "name": "Mark file processed"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Check period overlap\"\n// Place right after \"Parse Import\". Compares this file's period with periods already\n// imported for the SAME broker (stored in FILE_UNIQUE_CZ_TAX by \"Mark file processed\").\n// Output: one item { broker, period_from, period_to, overlap, clash_from, clash_to, text }\n//   -> IF \"Period overlap?\" : true  -> \"Notify period overlap\" sends {{ $json.text }}, stop\n//                             false -> Get existing lots (rest of the workflow)\n// Two periods overlap if they share at least one day.\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\n\nconst meta = $('Parse Import').all().map(i => i.json).find(r => r.kind === 'meta');\nif (!meta || !meta.period_from || !meta.period_to) {\n  throw new Error('Could not determine the period of this file');\n}\n\nconst done = $('Check processed files').all().map(i => i.json)\n  .filter(r => r.broker === meta.broker && r.period_from && r.period_to);\n\nconst clash = done.find(r => meta.period_from <= r.period_to && meta.period_to >= r.period_from);\n\nconst text = !clash ? '' : ({\n  en: `⛔ File not processed: ${meta.broker} ${meta.period_from} → ${meta.period_to} overlaps an already imported period ${clash.period_from} → ${clash.period_to}.\\nExport a statement that starts after ${clash.period_to}.`,\n  uk: `⛔ Файл не оброблено: ${meta.broker} ${meta.period_from} → ${meta.period_to} перекривається з уже імпортованим періодом ${clash.period_from} → ${clash.period_to}.\\nВивантаж виписку, що починається після ${clash.period_to}.`,\n  cs: `⛔ Soubor nebyl zpracován: ${meta.broker} ${meta.period_from} → ${meta.period_to} se překrývá s již importovaným obdobím ${clash.period_from} → ${clash.period_to}.\\nStáhněte výpis, který začíná po ${clash.period_to}.`,\n})[LANG];\n\nreturn [{ json: {\n  broker: meta.broker,\n  period_from: meta.period_from,\n  period_to: meta.period_to,\n  period_source: meta.period_source,\n  overlap: Boolean(clash),\n  clash_from: clash ? clash.period_from : null,\n  clash_to: clash ? clash.period_to : null,\n  text,\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        192
+      ],
+      "id": "8ef98db3-6447-4370-a47c-ad195e0aaf47",
+      "name": "Check period overlap"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_sales"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        688,
+        -544
+      ],
+      "id": "b7ca8e08-8de6-4c11-94bb-27c276c42404",
+      "name": "Report: get sales",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_ytd"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        -544
+      ],
+      "id": "b23d473f-793e-4283-a1a7-a75555192fbb",
+      "name": "Report: get ytd",
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_lots"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        -544
+      ],
+      "id": "8d8bee77-8061-40f5-9c1b-24d18c5b8e9a",
+      "name": "Report: get lots",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Build report\"\n//   /zvit  or /report          -> full report: every year, all-time totals, all tickers, open positions\n//   /zvit 2026 or /report 2026 -> one tax year in detail (for the tax return)\n//   /help  or /start           -> list of commands\n// Reads: $('Report: get sales').all()  tax_sales rows\n//        $('Report: get ytd').all()    tax_ytd rows\n//        $('Report: get lots').all()   tax_lots rows (open positions)\n// Output: one item { text } for Telegram (parse mode HTML)\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\nconst T = {\n  en: {\n    help: '🤖 <b>CZ Tax Helper</b>\\n' +\n      'Send a Trading 212 or IBKR CSV statement as a file — the bot imports it.\\n\\n' +\n      '/report — all years, tickers, open positions\\n' +\n      '/report 2026 — one year in detail + tax estimate\\n' +\n      '/sell NVDA 0.5 185 — tax impact of a planned sale\\n' +\n      '/sell VOO free — how much you can sell tax-free today\\n' +\n      '/tax 2026 — numbers for the Czech tax return (DAP)\\n' +\n      '/export 2026 — CSV with every transaction of the year\\n\\n' +\n      '<i>Czech aliases: /zvit = /report, /dap = /tax</i>',\n    yearTitle: y => `📅 <b>Report for ${y}</b>`,\n    noData: y => `No data for ${y}.`,\n    sales: n => `<b>Sale of securities</b> (${n} records)`,\n    revenue: (v, over) => `Proceeds: ${v} / 100 000 CZK ${over ? '⚠️ limit exceeded' : '✅ within limit'}`,\n    taxableGain: v => `Gain (3-year test not met): ${v} CZK`,\n    exemptGain: v => `Gain exempt under the 3-year test: ${v} CZK`,\n    toTax: v => `→ taxable: <b>${v} CZK</b>`,\n    exempt: '→ exempt (proceeds ≤ 100 000 CZK)',\n    dividends: '<b>Dividends</b>',\n    divLine: (g, w) => `Gross: ${g} CZK, withheld abroad: ${w} CZK`,\n    interest: '<b>Interest on cash</b>',\n    estimate: '<b>Estimated tax 15 %</b>',\n    fromSales: v => `From sales: ${v} CZK`,\n    fromDiv: (a, c, r) => `From dividends: ${a} − credit ${c} = ${r} CZK`,\n    fromInt: v => `From interest: ${v} CZK`,\n    total: v => `<b>Total: ≈ ${v} CZK</b>`,\n    disclaimer: '<i>Estimate without other income or deductions — not tax advice.</i>',\n    byTicker: '<b>By ticker</b>',\n    byBroker: v => `By broker: ${v}`,\n    fullTitle: '📒 <b>Full report</b> (realized, CZK)',\n    byYear: '<b>By year</b>',\n    yearLine: (y, g, d) => `<b>${y}</b>: sales ${g}, dividends ${d}, `,\n    yInt: v => `interest ${v}, `,\n    yRest: (r, ok, tax) => `proceeds ${r} ${ok}, tax ≈ ${tax}`,\n    totLine: (g, d, i, w, tax) => `<b>Total</b>: sales ${g}, dividends ${d}, interest ${i}, withheld ${w}, tax ≈ ${tax}`,\n    tickers: '<b>Tickers, all time</b>',\n    noSales: 'no sales yet',\n    open: '<b>Open positions</b> (cost · tax-free from)',\n    none: 'none',\n    pcs: 'pcs',\n    from: d => `from ${d}`,\n    firstAll: (a, b) => `first from ${a}, all from ${b}`,\n    details: y => `Details for a year: /report ${y}`,\n    cut: '… truncated.',\n  },\n  uk: {\n    help: '🤖 <b>CZ Tax Helper</b>\\n' +\n      'Надішли CSV-виписку Trading 212 або IBKR файлом — бот її імпортує.\\n\\n' +\n      '/zvit — усі роки, тікери, відкриті позиції\\n' +\n      '/zvit 2026 — один рік детально + оцінка податку\\n' +\n      '/sell NVDA 0.5 185 — податок із запланованого продажу\\n' +\n      '/sell VOO free — скільки можна продати без податку сьогодні\\n' +\n      '/dap 2026 — цифри для декларації\\n' +\n      '/export 2026 — CSV з усіма операціями року\\n\\n' +\n      '<i>Англійські синоніми: /report = /zvit, /tax = /dap</i>',\n    yearTitle: y => `📅 <b>Звіт за ${y}</b>`,\n    noData: y => `За ${y} рік даних немає.`,\n    sales: n => `<b>Продажі цінних паперів</b> (${n} записів)`,\n    revenue: (v, over) => `Виручка: ${v} / 100 000 CZK ${over ? '⚠️ ліміт перевищено' : '✅ в межах ліміту'}`,\n    taxableGain: v => `Прибуток (3-річний тест не пройдено): ${v} CZK`,\n    exemptGain: v => `Прибуток звільнений за 3-річним тестом: ${v} CZK`,\n    toTax: v => `→ до оподаткування: <b>${v} CZK</b>`,\n    exempt: '→ звільнено (виручка ≤ 100 000 CZK)',\n    dividends: '<b>Дивіденди</b>',\n    divLine: (g, w) => `Брутто: ${g} CZK, утримано за кордоном: ${w} CZK`,\n    interest: '<b>Проценти на залишок</b>',\n    estimate: '<b>Орієнтовний податок 15 %</b>',\n    fromSales: v => `З продажів: ${v} CZK`,\n    fromDiv: (a, c, r) => `З дивідендів: ${a} − зарахування ${c} = ${r} CZK`,\n    fromInt: v => `З процентів: ${v} CZK`,\n    total: v => `<b>Разом: ≈ ${v} CZK</b>`,\n    disclaimer: '<i>Оцінка без інших доходів і знижок — не податкова консультація.</i>',\n    byTicker: '<b>По тікерах</b>',\n    byBroker: v => `По брокерах: ${v}`,\n    fullTitle: '📒 <b>Повний звіт</b> (реалізований прибуток, CZK)',\n    byYear: '<b>По роках</b>',\n    yearLine: (y, g, d) => `<b>${y}</b>: продажі ${g}, дивіденди ${d}, `,\n    yInt: v => `проценти ${v}, `,\n    yRest: (r, ok, tax) => `виручка ${r} ${ok}, податок ≈ ${tax}`,\n    totLine: (g, d, i, w, tax) => `<b>Разом</b>: продажі ${g}, дивіденди ${d}, проценти ${i}, утримано ${w}, податок ≈ ${tax}`,\n    tickers: '<b>Тікери за весь час</b>',\n    noSales: 'продажів ще немає',\n    open: '<b>Відкриті позиції</b> (собівартість · звільнення від податку)',\n    none: 'немає',\n    pcs: 'шт.',\n    from: d => `з ${d}`,\n    firstAll: (a, b) => `перші з ${a}, усі з ${b}`,\n    details: y => `Деталі за рік: /zvit ${y}`,\n    cut: '… обрізано.',\n  },\n  cs: {\n    help: '🤖 <b>CZ Tax Helper</b>\\n' +\n      'Pošlete výpis z Trading 212 nebo IBKR ve formátu CSV jako soubor — bot ho naimportuje.\\n\\n' +\n      '/report — všechny roky, tickery, otevřené pozice\\n' +\n      '/report 2026 — jeden rok podrobně + odhad daně\\n' +\n      '/sell NVDA 0.5 185 — daňový dopad plánovaného prodeje\\n' +\n      '/sell VOO free — kolik lze dnes prodat bez daně\\n' +\n      '/dap 2026 — podklady pro daňové přiznání\\n' +\n      '/export 2026 — CSV se všemi transakcemi roku\\n\\n' +\n      '<i>Aliasy: /zvit = /report, /tax = /dap</i>',\n    yearTitle: y => `📅 <b>Přehled za ${y}</b>`,\n    noData: y => `Za rok ${y} nejsou žádná data.`,\n    sales: n => `<b>Prodej cenných papírů</b> (${n} záznamů)`,\n    revenue: (v, over) => `Příjmy: ${v} / 100 000 CZK ${over ? '⚠️ limit překročen' : '✅ v limitu'}`,\n    taxableGain: v => `Zisk (bez splnění časového testu): ${v} CZK`,\n    exemptGain: v => `Zisk osvobozený časovým testem: ${v} CZK`,\n    toTax: v => `→ ke zdanění: <b>${v} CZK</b>`,\n    exempt: '→ osvobozeno (příjmy ≤ 100 000 CZK)',\n    dividends: '<b>Dividendy</b>',\n    divLine: (g, w) => `Hrubé: ${g} CZK, sraženo v zahraničí: ${w} CZK`,\n    interest: '<b>Úroky z hotovosti</b>',\n    estimate: '<b>Odhad daně 15 %</b>',\n    fromSales: v => `Z prodejů: ${v} CZK`,\n    fromDiv: (a, c, r) => `Z dividend: ${a} − zápočet ${c} = ${r} CZK`,\n    fromInt: v => `Z úroků: ${v} CZK`,\n    total: v => `<b>Celkem: ≈ ${v} CZK</b>`,\n    disclaimer: '<i>Odhad bez ostatních příjmů a odpočtů — nejde o daňové poradenství.</i>',\n    byTicker: '<b>Podle tickerů</b>',\n    byBroker: v => `Podle brokerů: ${v}`,\n    fullTitle: '📒 <b>Celkový přehled</b> (realizováno, CZK)',\n    byYear: '<b>Podle let</b>',\n    yearLine: (y, g, d) => `<b>${y}</b>: prodeje ${g}, dividendy ${d}, `,\n    yInt: v => `úroky ${v}, `,\n    yRest: (r, ok, tax) => `příjmy ${r} ${ok}, daň ≈ ${tax}`,\n    totLine: (g, d, i, w, tax) => `<b>Celkem</b>: prodeje ${g}, dividendy ${d}, úroky ${i}, sraženo ${w}, daň ≈ ${tax}`,\n    tickers: '<b>Tickery za celou dobu</b>',\n    noSales: 'zatím žádné prodeje',\n    open: '<b>Otevřené pozice</b> (pořizovací cena · bez daně od)',\n    none: 'žádné',\n    pcs: 'ks',\n    from: d => `od ${d}`,\n    firstAll: (a, b) => `první od ${a}, vše od ${b}`,\n    details: y => `Detail roku: /report ${y}`,\n    cut: '… zkráceno.',\n  },\n}[LANG];\n\nconst num = v => Number(v) || 0;\nconst fmt = n => Math.round(n).toLocaleString('cs-CZ');\nconst sign = n => (Math.round(n) > 0 ? '+' : '') + fmt(n);\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst exempt = s => s.time_test_passed === true || s.time_test_passed === 'true';\nconst LIMIT_CZK = 100000;\nconst RATE = 0.15;\n\nconst cmd = String($('Telegram Trigger').first().json.message.text || '').trim();\nif (/^\\/(help|start)\\b/i.test(cmd)) return [{ json: { text: T.help } }];\nconst arg = cmd.split(/\\s+/)[1];\nconst yearMode = /^\\d{4}$/.test(arg || '');\n\nconst sales = $('Report: get sales').all().map(i => i.json).filter(r => r.year && r.ticker);\nconst ytd = $('Report: get ytd').all().map(i => i.json).filter(r => r.year);\nconst lots = $('Report: get lots').all().map(i => i.json).filter(r => r.ident && num(r.qty_remaining) > 0);\n\n// ---------- per-year totals ----------\nconst years = {};\nconst Y = y => (years[y] ||= { revenue: 0, taxableGain: 0, exemptGain: 0, dividend: 0, withholding: 0, interest: 0, count: 0 });\nfor (const s of sales) {\n  const t = Y(num(s.year));\n  const g = num(s.proceeds_czk) - num(s.cost_czk);\n  t.revenue += num(s.proceeds_czk); t.count += 1;\n  if (exempt(s)) t.exemptGain += g; else t.taxableGain += g;\n}\nfor (const r of ytd) {\n  const t = Y(num(r.year));\n  t.dividend += num(r.dividend_czk);\n  t.withholding += num(r.withholding_czk);\n  t.interest += num(r.interest_czk);\n}\n\nfunction estimate(t) {\n  const over = t.revenue > LIMIT_CZK;\n  const salesTax = over ? Math.max(0, t.taxableGain) * RATE : 0;\n  const divTax = t.dividend * RATE;\n  const credit = Math.min(Math.abs(t.withholding), divTax);\n  const interestTax = t.interest * RATE;   // no tax withheld on T212 interest\n  return { over, salesTax, divTax: Math.max(0, divTax - credit), credit, interestTax };\n}\n\nfunction tickerTable(list) {\n  const by = {};\n  for (const s of list) {\n    const k = `${s.broker}|${s.ticker}`;\n    const t = (by[k] ||= { broker: s.broker, ticker: s.ticker, gain: 0, count: 0 });\n    t.gain += num(s.proceeds_czk) - num(s.cost_czk); t.count += 1;\n  }\n  return Object.values(by).sort((a, b) => b.gain - a.gain);\n}\n\nfunction brokerLine(rows) {\n  const by = {};\n  for (const t of rows) by[t.broker] = (by[t.broker] || 0) + t.gain;\n  return Object.entries(by).map(([b, g]) => `${b} ${sign(g)}`).join(', ');\n}\n\nlet msg = '';\n\nif (yearMode) {\n  // ================= ONE YEAR =================\n  const year = Number(arg);\n  const t = years[year];\n  msg += T.yearTitle(year) + '\\n';\n  if (!t) {\n    msg += '\\n' + T.noData(year);\n  } else {\n    const e = estimate(t);\n    msg += `\\n${T.sales(t.count)}\\n`;\n    msg += T.revenue(fmt(t.revenue), e.over) + '\\n';\n    msg += T.taxableGain(sign(t.taxableGain)) + '\\n';\n    if (t.exemptGain) msg += T.exemptGain(sign(t.exemptGain)) + '\\n';\n    msg += (e.over ? T.toTax(fmt(Math.max(0, t.taxableGain))) : T.exempt) + '\\n';\n\n    msg += `\\n${T.dividends}\\n`;\n    msg += T.divLine(fmt(t.dividend), fmt(Math.abs(t.withholding))) + '\\n';\n    if (t.interest) msg += `\\n${T.interest}\\n${fmt(t.interest)} CZK\\n`;\n\n    msg += `\\n${T.estimate}\\n`;\n    msg += T.fromSales(fmt(e.salesTax)) + '\\n';\n    msg += T.fromDiv(fmt(t.dividend * RATE), fmt(e.credit), fmt(e.divTax)) + '\\n';\n    if (t.interest) msg += T.fromInt(fmt(e.interestTax)) + '\\n';\n    msg += T.total(fmt(e.salesTax + e.divTax + e.interestTax)) + '\\n';\n    msg += T.disclaimer + '\\n';\n\n    const rows = tickerTable(sales.filter(s => num(s.year) === year));\n    if (rows.length) {\n      msg += `\\n${T.byTicker}\\n`;\n      for (const r of rows) msg += `${r.gain >= 0 ? '🟢' : '🔴'} ${esc(r.ticker)} (${r.broker}): ${sign(r.gain)} CZK\\n`;\n      msg += T.byBroker(brokerLine(rows)) + '\\n';\n    }\n  }\n} else {\n  // ================= FULL REPORT =================\n  msg += `${T.fullTitle}\\n\\n${T.byYear}\\n`;\n  const tot = { gain: 0, dividend: 0, withholding: 0, interest: 0, tax: 0 };\n  for (const y of Object.keys(years).map(Number).sort()) {\n    const t = years[y], e = estimate(t);\n    msg += T.yearLine(y, sign(t.taxableGain + t.exemptGain), fmt(t.dividend));\n    if (t.interest) msg += T.yInt(fmt(t.interest));\n    msg += T.yRest(fmt(t.revenue), e.over ? '⚠️' : '✅', fmt(e.salesTax + e.divTax + e.interestTax)) + '\\n';\n    tot.gain += t.taxableGain + t.exemptGain; tot.dividend += t.dividend; tot.interest += t.interest;\n    tot.withholding += Math.abs(t.withholding); tot.tax += e.salesTax + e.divTax + e.interestTax;\n  }\n  msg += T.totLine(sign(tot.gain), fmt(tot.dividend), fmt(tot.interest), fmt(tot.withholding), fmt(tot.tax)) + '\\n';\n\n  const rows = tickerTable(sales);\n  msg += `\\n${T.tickers}\\n`;\n  if (!rows.length) msg += T.noSales + '\\n';\n  for (const r of rows) msg += `${r.gain >= 0 ? '🟢' : '🔴'} ${esc(r.ticker)} (${r.broker}): ${sign(r.gain)}\\n`;\n  if (rows.length) msg += T.byBroker(brokerLine(rows)) + '\\n';\n\n  const plus3 = d => { const x = new Date(d); x.setFullYear(x.getFullYear() + 3); return x.toISOString().slice(0, 10); };\n  const pos = {};\n  for (const l of lots) {\n    const k = `${l.broker}|${l.ident}`;\n    const p = (pos[k] ||= { broker: l.broker, ticker: l.ticker, qty: 0, cost: 0, currency: l.currency, first: l.purchase_date, last: l.purchase_date });\n    p.qty += num(l.qty_remaining); p.cost += num(l.cost_native);\n    if (l.purchase_date < p.first) p.first = l.purchase_date;\n    if (l.purchase_date > p.last) p.last = l.purchase_date;\n  }\n  const open = Object.values(pos).sort((a, b) => a.first.localeCompare(b.first));\n  msg += `\\n${T.open}\\n`;\n  if (!open.length) msg += T.none + '\\n';\n  for (const p of open) {\n    const from = plus3(p.first), all = plus3(p.last);\n    msg += `• ${esc(p.ticker)} (${p.broker}): ${+p.qty.toFixed(4)} ${T.pcs}, ${fmt(p.cost)} ${p.currency} · `;\n    msg += (from === all ? T.from(from) : T.firstAll(from, all)) + '\\n';\n  }\n  msg += '\\n' + T.details(new Date().getFullYear());\n}\n\nconst MAX = 4096;\nif (msg.length > MAX) msg = msg.slice(0, MAX - 40) + '\\n' + T.cut;\nreturn [{ json: { text: msg } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -832
+      ],
+      "id": "a7d7bde4-a985-48bf-b844-c5abaf6cc796",
+      "name": "Build report"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b4ba3641-fe20-4ea3-8740-9bfdad1b6687",
+              "leftValue": "={{ $json.message.document.mime_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "56258eda-94cd-4a90-ac2b-378d70a9bc0c",
+              "leftValue": "={{ $json.message.from.id }}",
+              "rightValue": "={{ Number($('Config').first().json.telegram_user_id) }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        656,
+        112
+      ],
+      "id": "dc99f018-5478-4ac0-8918-ad50df99df12",
+      "name": "Is file from me?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        880,
+        208
+      ],
+      "id": "661b615b-7aa2-4b9a-8959-5c0b284df00f",
+      "name": "Ignore other messages"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Check if duplicate\"\n// Place after \"Check processed files\" (Data Table \"processed_files\": Get rows)\n// Compares the current file's file_unique_id against already-processed ones.\n\nconst fileUniqueId = $('Get a file').item.json.result.file_unique_id;\nconst processed = $('Check processed files').all().map(i => i.json);\nconst alreadyDone = processed.some(r => r.file_unique_id === fileUniqueId);\n\nreturn [{ json: { file_unique_id: fileUniqueId, already_processed: alreadyDone } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        16
+      ],
+      "id": "198cf300-4686-44f3-ae4f-dd3230eb87e9",
+      "name": "Check if duplicate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "04fade2d-a7f1-40a4-9a7c-961df8b536c8",
+              "leftValue": "={{ $json.already_processed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1552,
+        16
+      ],
+      "id": "f5741fba-34b8-49a4-ab9b-809139bf13b5",
+      "name": "Already processed?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1776,
+        -80
+      ],
+      "id": "697545bf-8526-4149-8ab4-1a301b36cc10",
+      "name": "Skip duplicate file"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $('Get a file').item.json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1776,
+        192
+      ],
+      "id": "aa93f10f-e4f7-4a11-85d7-1f3574dd80a9",
+      "name": "Download file from Telegram"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b6776973-dc16-4293-a1af-9ce4677a4f7a",
+              "leftValue": "={{ $json.overlap }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2448,
+        192
+      ],
+      "id": "952f2de2-7baa-4440-88d5-1aa5cfd6948a",
+      "name": "Period overlap?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2672,
+        96
+      ],
+      "id": "5252f8d8-af67-44a5-9d28-88990dc2207d",
+      "name": "Notify period overlap",
+      "webhookId": "4ea7d25d-a233-44aa-aeef-20b8b9fc2a9f"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3792,
+        288
+      ],
+      "id": "df2fbef7-bfdf-4f6e-bab0-19a2967baf14",
+      "name": "Loop: each missing date"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.cnb.cz/cs/financni-trhy/devizovy-trh/kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt?date={{ $json.cnb_date_param }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4000,
+        304
+      ],
+      "id": "db323de5-dda5-4893-8f62-238379bc17a7",
+      "name": "Fetch CNB rates"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "cnb_rate_cache"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $json.date }}",
+            "currency": "={{ $json.currency }}",
+            "rate": "={{ $json.rate }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "rate",
+              "displayName": "rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4416,
+        304
+      ],
+      "id": "ce18f512-65f9-4852-a07b-345d1dba075b",
+      "name": "Save rate (cnb_rate_cache)"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b06adb10-b67f-4fdd-9b72-c245b3113a2c",
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "lot_upsert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lot_upsert"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "68015a64-bc5c-4d9c-bd7a-3bc428ff7411",
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "lot_delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lot_delete"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "ytd_upsert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "db8935bf-fd6e-47ae-9e00-c28b3a45e528"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ytd_upsert"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "fcdb8a22-e9ac-4ada-a5e9-3207252de6f8",
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "income_detail",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "income_detail"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1cfe2912-dead-4ce3-a4e7-e99a2ce8a743",
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "sale_detail",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sale_detail"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f2a25d71-e2a1-4e40-be90-980fac63a804",
+                    "leftValue": "={{$json._op}}",
+                    "rightValue": "telegram_summary",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "telegram_summary"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        4464,
+        -128
+      ],
+      "id": "9d57a537-a961-4101-a9a9-b1d785f49976",
+      "name": "Route writes"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_lots"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "broker",
+              "keyValue": "={{ $json.broker }}"
+            },
+            {
+              "keyName": "ident",
+              "keyValue": "={{ $json.ident }}"
+            },
+            {
+              "keyName": "purchase_date",
+              "keyValue": "={{ $json.purchase_date }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "qty_remaining": "={{ $json.qty_remaining }}",
+            "cost_native": "={{ $json.cost_native }}",
+            "broker": "={{ $json.broker }}",
+            "ticker": "={{ $json.ticker }}",
+            "ident": "={{ $json.ident }}",
+            "purchase_date": "={{ $json.purchase_date }}",
+            "currency": "={{ $json.currency }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "broker",
+              "displayName": "broker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ident",
+              "displayName": "ident",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ticker",
+              "displayName": "ticker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "purchase_date",
+              "displayName": "purchase_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "qty_remaining",
+              "displayName": "qty_remaining",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cost_native",
+              "displayName": "cost_native",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        -736
+      ],
+      "id": "234ef9b4-9890-4410-bda1-2fed16391733",
+      "name": "Save lot (tax_lots)"
+    },
+    {
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_lots"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "broker",
+              "keyValue": "={{ $json.broker }}"
+            },
+            {
+              "keyName": "ident",
+              "keyValue": "={{ $json.ident }}"
+            },
+            {
+              "keyName": "purchase_date",
+              "keyValue": "={{ $json.purchase_date }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        -544
+      ],
+      "id": "f369f4b8-00b7-4d15-a8f6-ee5c9e2b4adf",
+      "name": "Delete sold lot (tax_lots)"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_ytd"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "year",
+              "keyValue": "={{ $json.year }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sales_revenue_czk": "={{ $json.sales_revenue_czk }}",
+            "year": "={{ $json.year }}",
+            "dividend_czk": "={{ $json.dividend_czk }}",
+            "withholding_czk": "={{ $json.withholding_czk }}",
+            "interest_czk": "={{ $json.interest_czk }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "year",
+              "displayName": "year",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sales_revenue_czk",
+              "displayName": "sales_revenue_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "dividend_czk",
+              "displayName": "dividend_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "withholding_czk",
+              "displayName": "withholding_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "interest_czk",
+              "displayName": "interest_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        -352
+      ],
+      "id": "0673c7a7-f0a1-4732-afa1-bca36e6516bb",
+      "name": "Save year totals (tax_ytd)"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_sales"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "qty": "={{ $json.qty }}",
+            "cost_czk": "={{ $json.cost_czk }}",
+            "proceeds_czk": "={{ $json.proceeds_czk }}",
+            "year": "={{ $json.year }}",
+            "broker": "={{ $json.broker }}",
+            "ticker": "={{ $json.ticker }}",
+            "sell_date": "={{ $json.sell_date }}",
+            "purchase_date": "={{ $json.purchase_date }}",
+            "time_test_passed": "={{ $json.time_test_passed }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "year",
+              "displayName": "year",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "broker",
+              "displayName": "broker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ticker",
+              "displayName": "ticker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sell_date",
+              "displayName": "sell_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "purchase_date",
+              "displayName": "purchase_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "qty",
+              "displayName": "qty",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cost_czk",
+              "displayName": "cost_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "proceeds_czk",
+              "displayName": "proceeds_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "time_test_passed",
+              "displayName": "time_test_passed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        32
+      ],
+      "id": "d554da03-ff83-4060-b8d6-98bacca3a85f",
+      "name": "Save sale (tax_sales)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5168,
+        416
+      ],
+      "id": "9fb3d335-188e-4ab8-8a15-313175857b7f",
+      "name": "Send import summary",
+      "webhookId": "b5a7f8db-ac54-4356-bde0-e9e4f8c37c4d"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2464,
+        -640
+      ],
+      "id": "f7d2fcaf-42a0-49dd-9c4e-c2bf1a7ee02f",
+      "name": "Send report",
+      "webhookId": "5e81e682-027f-428f-8b83-55bb2558d797"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "25af130c-4aff-4f30-88aa-d54db7bf9dce",
+              "leftValue": "={{ $('Telegram Trigger').item.json.message.text }}",
+              "rightValue": "/",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "6ce2ce6f-4b3d-4fe2-ba1a-f316648838ce",
+              "leftValue": "={{ $('Telegram Trigger').item.json.message.from.id }}",
+              "rightValue": "={{ Number($('Config').first().json.telegram_user_id) }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        432,
+        0
+      ],
+      "id": "f74dd466-4627-4c24-92d1-da80f76512bf",
+      "name": "Is command?"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "cnb_rate_cache"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        -544
+      ],
+      "id": "c313688b-b112-48f7-934a-80c782cb69e1",
+      "name": "Report: get rates",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Plan sale\"  -  what-if for a sale, nothing is written\n//   /sell NVDA 0.5 185 USD   -> sell 0.5 at 185 USD (currency optional, default = lot currency)\n//   /sell VOO all 690        -> sell the whole position\n//   /sell VOO free           -> how much can be sold tax-free today (3-year test)\n//   /sell NVDA 0.5 185 T212  -> pick the broker if both brokers hold the ticker\n// Reads: $('Report: get lots').all()   tax_lots\n//        $('Report: get ytd').all()    tax_ytd\n//        $('Report: get sales').all()  tax_sales\n//        $('Report: get rates').all()  cnb_rate_cache  (Return All = ON)\n// Output: one item { text } for Telegram (HTML)\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\nconst T = {\n  en: {\n    help: `ℹ️ <b>Sale planner</b>\\n` +\n      `/sell NVDA 0.5 185 USD — sell 0.5 shares at 185 USD\\n` +\n      `/sell VOO all 690 — sell the whole position\\n` +\n      `/sell VOO free — how much you can sell tax-free today\\n` +\n      `The price currency is optional (default = lot currency: T212 = EUR). ` +\n      `If both brokers hold the ticker, add T212 or IBKR.`,\n    noPos: t => `❓ No <b>${t}</b> position in tax_lots.\\n\\n`,\n    twoBrokers: (t, list, b) => `${t} is held at ${list} — add the broker: /sell ${t} … ${b}`,\n    pcs: 'pcs',\n    hold: (t, b, q) => `🗓 <b>${t} (${b})</b>: you hold ${q} pcs.\\n`,\n    freeNow: q => `Tax-free to sell right now: <b>${q} pcs</b>\\n`,\n    noneFree: `No lot has passed the 3-year test yet.\\n`,\n    nextFree: (q, d) => `The next ${q} pcs become tax-free on ${d}.\\n`,\n    allFree: d => `The whole position is tax-free from ${d}.`,\n    onlyHave: (q, t, b) => `⛔ You only have ${q} pcs of ${t} (${b}).`,\n    noRate: (a, b) => `⛔ cnb_rate_cache has no ${a}/${b} rate.`,\n    title: (q, t, b) => `🧮 <b>Sale plan: ${q} × ${t} (${b})</b>\\n`,\n    price: (p, c, czk, rev) => `Price ${p} ${c} ≈ ${czk} CZK/pc, proceeds ≈ <b>${rev} CZK</b>\\n\\n`,\n    lots: `<b>FIFO lots</b>\\n`,\n    lotExempt: ` — exempt\\n`,\n    lotFreeFrom: d => ` — tax-free from ${d}\\n`,\n    moreLots: n => `… and ${n} more lots\\n`,\n    gain: `<b>Gain</b>\\n`,\n    gainExempt: (q, g) => `Exempt (3+ years): ${q} pcs, ${g} CZK\\n`,\n    gainTaxable: (q, g) => `Not exempt: ${q} pcs, ${g} CZK\\n`,\n    limit: y => `<b>100 000 CZK limit in ${y}</b>\\n`,\n    limitLine: (a, b) => `Now ${a} → after the sale ${b} CZK`,\n    limitLeft: v => ` ✅ (${v} left)\\n`,\n    crossing: (y, g) => `❗ This sale crosses the limit — gains from earlier ${y} sales (${g} CZK) become taxable too.\\n`,\n    tax: v => `\\n<b>Tax caused by this sale: ≈ ${v} CZK</b>\\n`,\n    lowers: ' (lowers your tax)',\n    wait: d => `💡 Wait until <b>${d}</b> and this whole sale is tax-free.\\n`,\n    canFree: q => `💡 You can already sell ${q} pcs tax-free.\\n`,\n    approx: `\\n<i>Part of the cost in CZK uses the nearest cached ČNB rate — this is an estimate.</i>`,\n    note: `\\n<i>Forecast only, nothing was written. Assumes FIFO.</i>`,\n    cut: '\\n… truncated.',\n  },\n  uk: {\n    help: `ℹ️ <b>Планувальник продажу</b>\\n` +\n      `/sell NVDA 0.5 185 USD — продати 0.5 шт. по 185 USD\\n` +\n      `/sell VOO all 690 — продати всю позицію\\n` +\n      `/sell VOO free — скільки можна продати без податку сьогодні\\n` +\n      `Валюта ціни необов'язкова (за замовчуванням — валюта лота: T212 = EUR). ` +\n      `Якщо тікер є в обох брокерів — додай T212 або IBKR.`,\n    noPos: t => `❓ Позиції <b>${t}</b> у tax_lots немає.\\n\\n`,\n    twoBrokers: (t, list, b) => `${t} є в ${list} — додай брокера: /sell ${t} … ${b}`,\n    pcs: 'шт.',\n    hold: (t, b, q) => `🗓 <b>${t} (${b})</b>: маєш ${q} шт.\\n`,\n    freeNow: q => `Без податку можна продати вже зараз: <b>${q} шт.</b>\\n`,\n    noneFree: `Зараз жоден лот ще не пройшов 3-річний тест.\\n`,\n    nextFree: (q, d) => `Наступні ${q} шт. звільняться ${d}.\\n`,\n    allFree: d => `Уся позиція буде вільна від податку з ${d}.`,\n    onlyHave: (q, t, b) => `⛔ У тебе лише ${q} шт. ${t} (${b}).`,\n    noRate: (a, b) => `⛔ У cnb_rate_cache немає курсу ${a}/${b}.`,\n    title: (q, t, b) => `🧮 <b>План продажу: ${q} × ${t} (${b})</b>\\n`,\n    price: (p, c, czk, rev) => `Ціна ${p} ${c} ≈ ${czk} CZK/шт., виручка ≈ <b>${rev} CZK</b>\\n\\n`,\n    lots: `<b>Лоти за FIFO</b>\\n`,\n    lotExempt: ` — звільнено\\n`,\n    lotFreeFrom: d => ` — вільний з ${d}\\n`,\n    moreLots: n => `… і ще ${n} лотів\\n`,\n    gain: `<b>Прибуток</b>\\n`,\n    gainExempt: (q, g) => `Звільнено (3+ роки): ${q} шт., ${g} CZK\\n`,\n    gainTaxable: (q, g) => `Без звільнення: ${q} шт., ${g} CZK\\n`,\n    limit: y => `<b>Ліміт 100 000 CZK у ${y}</b>\\n`,\n    limitLine: (a, b) => `Зараз ${a} → після продажу ${b} CZK`,\n    limitLeft: v => ` ✅ (залишиться ${v})\\n`,\n    crossing: (y, g) => `❗ Цей продаж перевищить ліміт — оподатковуваним стане і прибуток з попередніх продажів ${y} (${g} CZK).\\n`,\n    tax: v => `\\n<b>Податок через цей продаж: ≈ ${v} CZK</b>\\n`,\n    lowers: ' (зменшить податок)',\n    wait: d => `💡 Якщо почекати до <b>${d}</b>, увесь цей продаж буде звільнений від податку.\\n`,\n    canFree: q => `💡 Без податку вже зараз можна продати ${q} шт.\\n`,\n    approx: `\\n<i>Собівартість у CZK частково за найближчим курсом ČNB з кешу — це оцінка.</i>`,\n    note: `\\n<i>Прогноз, нічого не записано. Чинний тільки при FIFO.</i>`,\n    cut: '\\n… обрізано.',\n  },\n  cs: {\n    help: `ℹ️ <b>Plánovač prodeje</b>\\n` +\n      `/sell NVDA 0.5 185 USD — prodat 0,5 ks za 185 USD\\n` +\n      `/sell VOO all 690 — prodat celou pozici\\n` +\n      `/sell VOO free — kolik lze dnes prodat bez daně\\n` +\n      `Měna ceny je volitelná (výchozí = měna lotu: T212 = EUR). ` +\n      `Pokud ticker držíte u obou brokerů, přidejte T212 nebo IBKR.`,\n    noPos: t => `❓ Pozice <b>${t}</b> v tax_lots neexistuje.\\n\\n`,\n    twoBrokers: (t, list, b) => `${t} držíte u ${list} — přidejte brokera: /sell ${t} … ${b}`,\n    pcs: 'ks',\n    hold: (t, b, q) => `🗓 <b>${t} (${b})</b>: držíte ${q} ks.\\n`,\n    freeNow: q => `Bez daně lze prodat už teď: <b>${q} ks</b>\\n`,\n    noneFree: `Žádný lot zatím nesplnil 3letý časový test.\\n`,\n    nextFree: (q, d) => `Dalších ${q} ks bude osvobozeno ${d}.\\n`,\n    allFree: d => `Celá pozice bude bez daně od ${d}.`,\n    onlyHave: (q, t, b) => `⛔ Máte jen ${q} ks ${t} (${b}).`,\n    noRate: (a, b) => `⛔ V cnb_rate_cache chybí kurz ${a}/${b}.`,\n    title: (q, t, b) => `🧮 <b>Plán prodeje: ${q} × ${t} (${b})</b>\\n`,\n    price: (p, c, czk, rev) => `Cena ${p} ${c} ≈ ${czk} CZK/ks, příjem ≈ <b>${rev} CZK</b>\\n\\n`,\n    lots: `<b>Loty podle FIFO</b>\\n`,\n    lotExempt: ` — osvobozeno\\n`,\n    lotFreeFrom: d => ` — bez daně od ${d}\\n`,\n    moreLots: n => `… a dalších ${n} lotů\\n`,\n    gain: `<b>Zisk</b>\\n`,\n    gainExempt: (q, g) => `Osvobozeno (3+ roky): ${q} ks, ${g} CZK\\n`,\n    gainTaxable: (q, g) => `Neosvobozeno: ${q} ks, ${g} CZK\\n`,\n    limit: y => `<b>Limit 100 000 CZK v roce ${y}</b>\\n`,\n    limitLine: (a, b) => `Nyní ${a} → po prodeji ${b} CZK`,\n    limitLeft: v => ` ✅ (zbývá ${v})\\n`,\n    crossing: (y, g) => `❗ Tímto prodejem překročíte limit — zdanitelné budou i zisky z dřívějších prodejů v roce ${y} (${g} CZK).\\n`,\n    tax: v => `\\n<b>Daň způsobená tímto prodejem: ≈ ${v} CZK</b>\\n`,\n    lowers: ' (sníží daň)',\n    wait: d => `💡 Když počkáte do <b>${d}</b>, bude celý tento prodej osvobozen.\\n`,\n    canFree: q => `💡 Už teď můžete bez daně prodat ${q} ks.\\n`,\n    approx: `\\n<i>Část pořizovací ceny v CZK je přepočtena nejbližším kurzem ČNB z cache — jde o odhad.</i>`,\n    note: `\\n<i>Pouze odhad, nic nebylo zapsáno. Předpokládá metodu FIFO.</i>`,\n    cut: '\\n… zkráceno.',\n  },\n}[LANG];\n\nconst num = v => Number(v) || 0;\nconst fmt = n => Math.round(n).toLocaleString('cs-CZ');\nconst sign = n => (Math.round(n) > 0 ? '+' : '') + fmt(n);\nconst q = n => +Number(n).toFixed(6);\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst LIMIT_CZK = 100000, RATE = 0.15;\nconst today = new Date().toISOString().slice(0, 10);\nconst year = Number(today.slice(0, 4));\nconst plus3 = d => { const x = new Date(d); x.setFullYear(x.getFullYear() + 3); return x.toISOString().slice(0, 10); };\nconst reply = text => [{ json: { text } }];\n\n// ---------- parse command ----------\nconst parts = String($('Telegram Trigger').first().json.message.text || '').trim().split(/\\s+/).slice(1);\nconst brokerArg = parts.find(p => /^(t212|ibkr)$/i.test(p));\nconst curArg = parts.find(p => /^(czk|eur|usd|gbp|chf)$/i.test(p));\nconst rest = parts.filter(p => p !== brokerArg && p !== curArg);\nconst [tickerArg, qtyArg, priceArg] = rest;\nif (!tickerArg) return reply(T.help);\n\n// ---------- lots of this position (FIFO order) ----------\nconst allLots = $('Report: get lots').all().map(i => i.json).filter(l => l.ident && num(l.qty_remaining) > 0);\nlet lots = allLots.filter(l => [l.ticker, l.ident].some(x => String(x).toUpperCase() === tickerArg.toUpperCase()));\nif (brokerArg) lots = lots.filter(l => l.broker.toUpperCase() === brokerArg.toUpperCase());\nconst brokers = [...new Set(lots.map(l => l.broker))];\nif (!lots.length) return reply(T.noPos(esc(tickerArg)) + T.help);\nif (brokers.length > 1) return reply(T.twoBrokers(esc(tickerArg), brokers.join(' & '), brokers[0]));\nlots.sort((a, b) => String(a.purchase_date).localeCompare(String(b.purchase_date)));\nconst broker = brokers[0];\nconst ticker = lots[0].ticker;\nconst lotCur = lots[0].currency;\nconst held = lots.reduce((s, l) => s + num(l.qty_remaining), 0);\n\n// ---------- tax-free quantity today ----------\nlet freeQty = 0;\nfor (const l of lots) { if (plus3(l.purchase_date) <= today) freeQty += num(l.qty_remaining); else break; }\nconst nextFree = lots.find(l => plus3(l.purchase_date) > today);\n\nif (/^free$/i.test(qtyArg || '')) {\n  let t = T.hold(esc(ticker), broker, q(held));\n  t += freeQty > 0 ? T.freeNow(q(freeQty)) : T.noneFree;\n  if (nextFree) t += T.nextFree(q(nextFree.qty_remaining), plus3(nextFree.purchase_date));\n  t += T.allFree(plus3(lots[lots.length - 1].purchase_date));\n  return reply(t);\n}\n\nconst qty = /^all$/i.test(qtyArg || '') ? held : num(String(qtyArg).replace(',', '.'));\nconst price = num(String(priceArg).replace(',', '.'));\nif (!(qty > 0) || !(price > 0)) return reply(T.help);\nif (qty > held + 1e-9) return reply(T.onlyHave(q(held), esc(ticker), broker));\n\n// ---------- CNB rates (latest for the sale, nearest cached for purchases) ----------\nconst rates = {};   // currency -> [{date, rate}]\nfor (const r of $('Report: get rates').all().map(i => i.json)) {\n  if (!r.date || !r.currency) continue;\n  (rates[r.currency] ||= []).push({ date: r.date, rate: num(r.rate) });\n}\nfor (const c in rates) rates[c].sort((a, b) => a.date.localeCompare(b.date));\nlet approx = false;\nfunction rateOn(date, cur) {\n  if (cur === 'CZK') return 1;\n  const list = rates[cur];\n  if (!list || !list.length) throw new Error(`No CNB rates for ${cur} in cnb_rate_cache`);\n  const exact = list.find(r => r.date === date);\n  if (exact) return exact.rate;\n  approx = true;\n  const t = new Date(date).getTime();\n  return list.reduce((best, r) => Math.abs(new Date(r.date) - t) < Math.abs(new Date(best.date) - t) ? r : best).rate;\n}\nconst latest = cur => (cur === 'CZK' ? 1 : rates[cur]?.[rates[cur].length - 1]?.rate);\nconst priceCur = (curArg || lotCur).toUpperCase();\nif (!latest(priceCur) || !latest(lotCur)) return reply(T.noRate(priceCur, lotCur));\nconst priceCzk = price * latest(priceCur);              // per share, CZK\n\n// ---------- FIFO simulation ----------\nlet need = qty;\nconst used = [];\nfor (const l of lots) {\n  if (need <= 1e-9) break;\n  const take = Math.min(num(l.qty_remaining), need);\n  const costCzk = num(l.cost_native) / num(l.qty_remaining) * take * rateOn(l.purchase_date, l.currency);\n  const free = plus3(l.purchase_date) <= today;\n  used.push({ date: l.purchase_date, qty: take, costCzk, proceedsCzk: take * priceCzk, free, freeFrom: plus3(l.purchase_date) });\n  need -= take;\n}\nconst exemptPart = used.filter(u => u.free), taxablePart = used.filter(u => !u.free);\nconst sum = (list, k) => list.reduce((s, u) => s + u[k], 0);\nconst revenue = sum(used, 'proceedsCzk');\nconst gainExempt = sum(exemptPart, 'proceedsCzk') - sum(exemptPart, 'costCzk');\nconst gainTaxable = sum(taxablePart, 'proceedsCzk') - sum(taxablePart, 'costCzk');\n\n// ---------- effect on this year's 100 000 CZK limit and tax ----------\nconst ytdRow = $('Report: get ytd').all().map(i => i.json).find(r => num(r.year) === year) || {};\nconst revBefore = num(ytdRow.sales_revenue_czk);\nconst gainBefore = $('Report: get sales').all().map(i => i.json)\n  .filter(s => num(s.year) === year && !(s.time_test_passed === true || s.time_test_passed === 'true'))\n  .reduce((s, r) => s + num(r.proceeds_czk) - num(r.cost_czk), 0);\nconst revAfter = revBefore + revenue;\nconst taxBefore = revBefore > LIMIT_CZK ? Math.max(0, gainBefore) * RATE : 0;\nconst taxAfter = revAfter > LIMIT_CZK ? Math.max(0, gainBefore + gainTaxable) * RATE : 0;\nconst extraTax = taxAfter - taxBefore;\n\n// ---------- message ----------\nlet t = T.title(q(qty), esc(ticker), broker);\nt += T.price(price, priceCur, fmt(priceCzk), fmt(revenue));\nt += T.lots;\nfor (const u of used.slice(0, 15)) {\n  t += `${u.free ? '✅' : '⏳'} ${u.date}: ${q(u.qty)} ${T.pcs}, ${sign(u.proceedsCzk - u.costCzk)} CZK`;\n  t += u.free ? T.lotExempt : T.lotFreeFrom(u.freeFrom);\n}\nif (used.length > 15) t += T.moreLots(used.length - 15);\n\nt += `\\n${T.gain}`;\nif (exemptPart.length) t += T.gainExempt(q(sum(exemptPart, 'qty')), sign(gainExempt));\nif (taxablePart.length) t += T.gainTaxable(q(sum(taxablePart, 'qty')), sign(gainTaxable));\n\nt += `\\n${T.limit(year)}`;\nt += T.limitLine(fmt(revBefore), fmt(revAfter));\nt += revAfter > LIMIT_CZK ? ` ⚠️\\n` : T.limitLeft(fmt(LIMIT_CZK - revAfter));\nif (revBefore <= LIMIT_CZK && revAfter > LIMIT_CZK && gainBefore > 0) t += T.crossing(year, sign(gainBefore));\n\nt += T.tax(extraTax > 0 ? fmt(extraTax) : extraTax < 0 ? '−' + fmt(-extraTax) + T.lowers : '0');\n\nif (taxablePart.length && gainTaxable > 0) {\n  t += T.wait(taxablePart[taxablePart.length - 1].freeFrom);\n  if (freeQty > 0) t += T.canFree(q(freeQty));\n}\nif (approx) t += T.approx;\nt += T.note;\n\nreturn reply(t.length > 4096 ? t.slice(0, 4050) + T.cut : t);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -640
+      ],
+      "id": "5ef0fd66-dfc3-4e48-8087-86ba5933b954",
+      "name": "Plan sale"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_income"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "year": "={{ $json.year }}",
+            "amount": "={{ $json.amount }}",
+            "amount_czk": "={{ $json.amount_czk }}",
+            "broker": "={{ $json.broker }}",
+            "type": "={{ $json.type }}",
+            "ticker": "={{ $json.ticker }}",
+            "isin": "={{ $json.isin }}",
+            "note": "={{ $json.note }}",
+            "currency": "={{ $json.currency }}",
+            "date": "={{ $json.date }}",
+            "country": "={{ $json.country }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "broker",
+              "displayName": "broker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ticker",
+              "displayName": "ticker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "isin",
+              "displayName": "isin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "note",
+              "displayName": "note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "year",
+              "displayName": "year",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "amount_czk",
+              "displayName": "amount_czk",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4944,
+        -160
+      ],
+      "id": "de99ad6d-4093-4d64-834b-00fc7ead9822",
+      "name": "Save income (tax_income)"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "tax_income"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1136,
+        -544
+      ],
+      "id": "89e801c3-efa5-45c4-a6be-e049975412ea",
+      "name": "Report: get income",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Build DAP summary\"   (command /dap 2026 or /tax 2026)\n// Totals for one tax year, grouped the way the Czech tax return (DAP) asks for them.\n// Reads: $('Report: get sales').all()   tax_sales\n//        $('Report: get income').all()  tax_income  (dividends / withholding / interest, one row each)\n// Output: one item { text } for Telegram (HTML)\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\nconst T = {\n  en: {\n    title: y => `🧾 <b>Tax return summary for ${y}</b>`,\n    s10: '<b>1. Sale of securities — § 10 (Příloha č. 2)</b>',\n    noSales: 'No sales.',\n    exemptLimit: v => `Proceeds ${v} CZK ≤ 100 000 → <b>exempt</b>, not reported.`,\n    income: v => `Příjmy (income): <b>${v} CZK</b>`,\n    costs: v => `Výdaje (cost + fees): <b>${v} CZK</b>`,\n    diff: v => `Rozdíl (difference): <b>${v} CZK</b>`,\n    loss: ' → loss, tax base = 0 (cannot be carried forward)',\n    deals: n => `Number of trades: ${n}`,\n    timeExempt: (n, r, g) => `Exempt under the 3-year test: ${n} trades, proceeds ${r} CZK, gain ${g} CZK — not reported.`,\n    s8div: '<b>2. Foreign dividends — § 8</b>',\n    noDiv: 'No dividends.',\n    country: (c, g, w, cr, pay) => `<b>${c}</b>: gross ${g} CZK, withheld ${w} CZK, creditable max ${cr} CZK → to pay ${pay} CZK`,\n    adr: '<i>Country is taken from the ISIN; for ADRs (SHEL, TM…) the paying country may differ.</i>',\n    s8int: '<b>3. Interest — § 8</b>',\n    intLine: v => `${v} CZK (no tax withheld)`,\n    noInt: 'None.',\n    total: v => `<b>Estimated tax: ≈ ${v} CZK</b>`,\n    parts: (a, b, c) => `(sales ${a} + dividends ${b} + interest ${c})`,\n    footer: y => `<i>Where exactly to report dividends and interest (general base or separate base under § 16a, Příloha č. 3/4) — check the official \"Pokyny k vyplnění\" for ${y}. Not tax advice. Full detail: /export ${y}</i>`,\n    cut: '\\n… truncated.',\n  },\n  uk: {\n    title: y => `🧾 <b>Підсумки для декларації за ${y}</b>`,\n    s10: '<b>1. Продаж цінних паперів — § 10 (Příloha č. 2)</b>',\n    noSales: 'Продажів не було.',\n    exemptLimit: v => `Виручка ${v} CZK ≤ 100 000 → <b>звільнено</b>, у декларацію не вписується.`,\n    income: v => `Příjmy (виручка): <b>${v} CZK</b>`,\n    costs: v => `Výdaje (собівартість + комісії): <b>${v} CZK</b>`,\n    diff: v => `Rozdíl: <b>${v} CZK</b>`,\n    loss: ' → збиток, база = 0 (на наступний рік не переноситься)',\n    deals: n => `Кількість угод: ${n}`,\n    timeExempt: (n, r, g) => `Звільнено за 3-річним тестом: ${n} угод, виручка ${r} CZK, прибуток ${g} CZK — не вписується.`,\n    s8div: '<b>2. Дивіденди з-за кордону — § 8</b>',\n    noDiv: 'Дивідендів не було.',\n    country: (c, g, w, cr, pay) => `<b>${c}</b>: брутто ${g} CZK, утримано ${w} CZK, до зарахування max ${cr} CZK → доплата ${pay} CZK`,\n    adr: '<i>Країна — за ISIN; для ADR (SHEL, TM…) країна платника може відрізнятися.</i>',\n    s8int: '<b>3. Проценти — § 8</b>',\n    intLine: v => `${v} CZK (податок не утримувався)`,\n    noInt: 'Не було.',\n    total: v => `<b>Орієнтовний податок: ≈ ${v} CZK</b>`,\n    parts: (a, b, c) => `(продажі ${a} + дивіденди ${b} + проценти ${c})`,\n    footer: y => `<i>Куди саме вписати дивіденди й проценти (загальний базис чи окремий за § 16a, Příloha č. 3/4) — звір з Pokyny k vyplnění за ${y}. Не податкова консультація. Детальний розрахунок: /export ${y}</i>`,\n    cut: '\\n… обрізано.',\n  },\n  cs: {\n    title: y => `🧾 <b>Podklady pro daňové přiznání za ${y}</b>`,\n    s10: '<b>1. Prodej cenných papírů — § 10 (Příloha č. 2)</b>',\n    noSales: 'Žádné prodeje.',\n    exemptLimit: v => `Příjmy ${v} CZK ≤ 100 000 → <b>osvobozeno</b>, neuvádí se.`,\n    income: v => `Příjmy: <b>${v} CZK</b>`,\n    costs: v => `Výdaje (pořizovací cena + poplatky): <b>${v} CZK</b>`,\n    diff: v => `Rozdíl: <b>${v} CZK</b>`,\n    loss: ' → ztráta, základ = 0 (nelze převést do dalších let)',\n    deals: n => `Počet obchodů: ${n}`,\n    timeExempt: (n, r, g) => `Osvobozeno časovým testem: ${n} obchodů, příjmy ${r} CZK, zisk ${g} CZK — neuvádí se.`,\n    s8div: '<b>2. Zahraniční dividendy — § 8</b>',\n    noDiv: 'Žádné dividendy.',\n    country: (c, g, w, cr, pay) => `<b>${c}</b>: hrubé ${g} CZK, sraženo ${w} CZK, započitatelné max ${cr} CZK → doplatit ${pay} CZK`,\n    adr: '<i>Země je určena podle ISIN; u ADR (SHEL, TM…) se může stát zdroje lišit.</i>',\n    s8int: '<b>3. Úroky — § 8</b>',\n    intLine: v => `${v} CZK (bez srážkové daně)`,\n    noInt: 'Žádné.',\n    total: v => `<b>Odhad daně: ≈ ${v} CZK</b>`,\n    parts: (a, b, c) => `(prodeje ${a} + dividendy ${b} + úroky ${c})`,\n    footer: y => `<i>Kam přesně uvést dividendy a úroky (obecný základ, nebo samostatný základ podle § 16a, Příloha č. 3/4) — ověřte v Pokynech k vyplnění za rok ${y}. Nejde o daňové poradenství. Podrobný výpočet: /export ${y}</i>`,\n    cut: '\\n… zkráceno.',\n  },\n}[LANG];\n\nconst num = v => Number(v) || 0;\nconst fmt = n => Math.round(n).toLocaleString('cs-CZ');\nconst LIMIT_CZK = 100000, RATE = 0.15;\nconst exempt = s => s.time_test_passed === true || s.time_test_passed === 'true';\n\nconst arg = String($('Telegram Trigger').first().json.message.text || '').trim().split(/\\s+/)[1];\nconst year = /^\\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear() - 1;\n\nconst sales = $('Report: get sales').all().map(i => i.json).filter(r => num(r.year) === year && r.ticker);\nconst income = $('Report: get income').all().map(i => i.json).filter(r => num(r.year) === year && r.type);\n\nlet t = T.title(year) + '\\n';\n\n// ---------- § 10: sale of securities ----------\nconst revenueAll = sales.reduce((s, r) => s + num(r.proceeds_czk), 0);\nconst taxable = sales.filter(r => !exempt(r));\nconst timeExempt = sales.filter(exempt);\nconst income10 = taxable.reduce((s, r) => s + num(r.proceeds_czk), 0);\nconst costs10 = taxable.reduce((s, r) => s + num(r.cost_czk), 0);\nconst base10 = income10 - costs10;\n\nt += `\\n${T.s10}\\n`;\nif (!sales.length) {\n  t += T.noSales + '\\n';\n} else if (revenueAll <= LIMIT_CZK) {\n  t += T.exemptLimit(fmt(revenueAll)) + '\\n';\n} else {\n  t += T.income(fmt(income10)) + '\\n';\n  t += T.costs(fmt(costs10)) + '\\n';\n  t += T.diff(fmt(base10)) + (base10 < 0 ? T.loss : '') + '\\n';\n  t += T.deals(taxable.length) + '\\n';\n}\nif (timeExempt.length) {\n  const g = timeExempt.reduce((s, r) => s + num(r.proceeds_czk) - num(r.cost_czk), 0);\n  t += T.timeExempt(timeExempt.length, fmt(timeExempt.reduce((s, r) => s + num(r.proceeds_czk), 0)), fmt(g)) + '\\n';\n}\nconst tax10 = revenueAll > LIMIT_CZK ? Math.max(0, base10) * RATE : 0;\n\n// ---------- § 8: dividends by country ----------\nconst byCountry = {};\nfor (const r of income.filter(r => r.type === 'dividend' || r.type === 'withholding')) {\n  const c = r.country || '??';\n  const x = (byCountry[c] ||= { gross: 0, withheld: 0 });\n  if (r.type === 'dividend') x.gross += num(r.amount_czk); else x.withheld -= num(r.amount_czk);\n}\nt += `\\n${T.s8div}\\n`;\nlet taxDiv = 0;\nconst countries = Object.entries(byCountry).sort((a, b) => b[1].gross - a[1].gross);\nif (!countries.length) t += T.noDiv + '\\n';\nfor (const [c, x] of countries) {\n  const czTax = x.gross * RATE;\n  const credit = Math.min(Math.max(0, x.withheld), czTax);\n  taxDiv += czTax - credit;\n  t += T.country(c, fmt(x.gross), fmt(x.withheld), fmt(credit), fmt(czTax - credit)) + '\\n';\n}\nif (countries.length) t += T.adr + '\\n';\n\n// ---------- § 8: interest ----------\nconst interest = income.filter(r => r.type === 'interest').reduce((s, r) => s + num(r.amount_czk), 0);\nt += `\\n${T.s8int}\\n`;\nt += (interest ? T.intLine(fmt(interest)) : T.noInt) + '\\n';\nconst taxInt = interest * RATE;\n\nt += '\\n' + T.total(fmt(tax10 + taxDiv + taxInt)) + '\\n';\nt += T.parts(fmt(tax10), fmt(taxDiv), fmt(taxInt)) + '\\n';\nt += '\\n' + T.footer(year);\n\nreturn [{ json: { text: t.length > 4096 ? t.slice(0, 4050) + T.cut : t } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -448
+      ],
+      "id": "fd022647-b2bb-4924-8a78-92d12a7a0fbf",
+      "name": "Build DAP summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: \"Build export\"   (command /export 2026)\n// Builds a CSV with every sale + every dividend / withholding / interest row of the year.\n// Opens in Czech Excel directly (separator ';', decimal comma, UTF-8 BOM).\n// Column names stay Czech in both languages - the file is evidence for the Czech tax office.\n// Reads: $('Report: get sales').all()   tax_sales\n//        $('Report: get income').all()  tax_income\n// Output: one item with binary \"data\" (the CSV) + json.caption -> Telegram \"Send Document\"\n// Language: field \"lang\" in the \"Config\" node = \"en\" (default), \"uk\" or \"cs\"\nconst LANG = { uk: 'uk', cs: 'cs', cz: 'cs' }[String($('Config').first().json.lang || '').toLowerCase()] || 'en';\nconst caption = (y, s, i) => ({\n  en: `📎 Tax detail for ${y}: ${s} sales, ${i} income rows`,\n  uk: `📎 Розрахунок за ${y}: ${s} продажів, ${i} рядків доходів`,\n  cs: `📎 Výpočet za ${y}: ${s} prodejů, ${i} řádků příjmů`,\n})[LANG];\n\nconst num = v => Number(v) || 0;\nconst dec = n => (Math.round(num(n) * 100) / 100).toFixed(2).replace('.', ',');\nconst qty = n => String(+num(n).toFixed(6)).replace('.', ',');\nconst cell = v => { const s = String(v ?? ''); return /[;\"\\n]/.test(s) ? `\"${s.replace(/\"/g, '\"\"')}\"` : s; };\nconst exempt = s => s.time_test_passed === true || s.time_test_passed === 'true';\n\nconst arg = String($('Telegram Trigger').first().json.message.text || '').trim().split(/\\s+/)[1];\nconst year = /^\\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear() - 1;\n\nconst sales = $('Report: get sales').all().map(i => i.json).filter(r => num(r.year) === year && r.ticker)\n  .sort((a, b) => String(a.sell_date).localeCompare(String(b.sell_date)));\nconst income = $('Report: get income').all().map(i => i.json).filter(r => num(r.year) === year && r.type)\n  .sort((a, b) => String(a.date).localeCompare(String(b.date)));\n\nconst header = ['typ', 'broker', 'ticker', 'isin_zeme', 'datum_nakupu', 'datum_prodeje_vyplaty', 'pocet',\n  'castka_mena', 'mena', 'prijem_czk', 'vydaj_czk', 'zisk_czk', 'casovy_test', 'poznamka'];\nconst rows = [header];\n\nfor (const s of sales) {\n  rows.push(['prodej', s.broker, s.ticker, '', s.purchase_date, s.sell_date, qty(s.qty), '', '',\n    dec(s.proceeds_czk), dec(s.cost_czk), dec(num(s.proceeds_czk) - num(s.cost_czk)),\n    exempt(s) ? 'ano' : 'ne', 'výdaj = pořizovací cena + poplatky']);\n}\nconst typeName = { dividend: 'dividenda', withholding: 'srazkova_dan', interest: 'urok' };\nfor (const r of income) {\n  rows.push([typeName[r.type] || r.type, r.broker, r.ticker, r.isin || r.country || '', '', r.date, '',\n    dec(r.amount), r.currency, dec(r.amount_czk), '', '', '', r.note || '']);\n}\n\n// totals at the bottom\nconst sum = (list, f) => list.reduce((a, r) => a + f(r), 0);\nconst taxable = sales.filter(s => !exempt(s));\nrows.push([]);\nrows.push(['SOUCET prodeje (bez casoveho testu)', '', '', '', '', '', '', '', '',\n  dec(sum(taxable, r => num(r.proceeds_czk))), dec(sum(taxable, r => num(r.cost_czk))),\n  dec(sum(taxable, r => num(r.proceeds_czk) - num(r.cost_czk)))]);\nrows.push(['SOUCET dividendy (brutto)', '', '', '', '', '', '', '', '', dec(sum(income.filter(r => r.type === 'dividend'), r => num(r.amount_czk)))]);\nrows.push(['SOUCET srazkova dan', '', '', '', '', '', '', '', '', dec(sum(income.filter(r => r.type === 'withholding'), r => num(r.amount_czk)))]);\nrows.push(['SOUCET uroky', '', '', '', '', '', '', '', '', dec(sum(income.filter(r => r.type === 'interest'), r => num(r.amount_czk)))]);\n\nconst csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\\r\\n');\nconst fileName = `dane_${year}.csv`;\nconst binary = await this.helpers.prepareBinaryData(Buffer.from(csv, 'utf8'), fileName, 'text/csv');\n\nreturn [{\n  json: { caption: caption(year, sales.length, income.length), fileName },\n  binary: { data: binary },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -256
+      ],
+      "id": "a3c0827b-ac20-46aa-951d-17d7a9ebb6e1",
+      "name": "Build export"
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ $json.caption }}"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2384,
+        -256
+      ],
+      "id": "843913fd-0fcb-423e-a79d-43538a82ba60",
+      "name": "Send a document",
+      "webhookId": "0ff5fc84-b772-44ad-9311-ad81a686cf4e"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9de8fffc-2594-4940-84f1-c353865ff8f4",
+                    "leftValue": "={{ $('Telegram Trigger').first().json.message.text }}",
+                    "rightValue": "/help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "help"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Telegram Trigger').first().json.message.text.replace('/report', '/zvit') }}",
+                    "rightValue": "/zvit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    },
+                    "id": "d3cf480c-c7ce-4ba0-bcbf-615ae46cfc4d"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "zvit"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "856c5781-30c1-4162-b523-6d746b5d4689",
+                    "leftValue": "={{ $('Telegram Trigger').first().json.message.text }}",
+                    "rightValue": "/sell",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sell"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1bab5470-2d93-4306-b613-0a07c1e39516",
+                    "leftValue": "={{ $('Telegram Trigger').first().json.message.text.replace('/tax', '/dap') }}",
+                    "rightValue": "/dap",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "dap"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "38b460e7-8989-4543-a066-560ad01fbf80",
+                    "leftValue": "={{ $('Telegram Trigger').first().json.message.text }}",
+                    "rightValue": "/export",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "export"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1808,
+        -576
+      ],
+      "id": "8dd9fc37-96d4-42cf-8cea-0fd72db9effd",
+      "name": "Which command?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a4d1b756-02c2-4fda-8598-0246727fa0c1",
+              "name": "lang",
+              "value": "en",
+              "type": "string"
+            },
+            {
+              "id": "23b93f79-d145-4d9a-a2ce-fb9ae2c68787",
+              "name": "telegram_user_id",
+              "value": "YOUR_TELEGRAM_USER_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "f3ea5e38-4b4e-4ba7-b681-25ed918b35ed",
+      "name": "Config"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a file": {
+      "main": [
+        [
+          {
+            "node": "Check processed files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing lots": {
+      "main": [
+        [
+          {
+            "node": "FIFO Match + Time Test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FIFO Match + Time Test": {
+      "main": [
+        [
+          {
+            "node": "Get YTD row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Import": {
+      "main": [
+        [
+          {
+            "node": "Check period overlap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get YTD row": {
+      "main": [
+        [
+          {
+            "node": "Get rate cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get rate cache": {
+      "main": [
+        [
+          {
+            "node": "Collect dates needing CNB rate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect dates needing CNB rate": {
+      "main": [
+        [
+          {
+            "node": "Loop: each missing date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CNB response": {
+      "main": [
+        [
+          {
+            "node": "Save rate (cnb_rate_cache)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To CZK + Update YTD": {
+      "main": [
+        [
+          {
+            "node": "Route writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get rate cache final": {
+      "main": [
+        [
+          {
+            "node": "To CZK + Update YTD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Telegram Summary": {
+      "main": [
+        [
+          {
+            "node": "Send import summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check processed files": {
+      "main": [
+        [
+          {
+            "node": "Check if duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check period overlap": {
+      "main": [
+        [
+          {
+            "node": "Period overlap?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report: get sales": {
+      "main": [
+        [
+          {
+            "node": "Report: get rates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report: get ytd": {
+      "main": [
+        [
+          {
+            "node": "Which command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report: get lots": {
+      "main": [
+        [
+          {
+            "node": "Report: get ytd",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is file from me?": {
+      "main": [
+        [
+          {
+            "node": "Get a file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore other messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if duplicate": {
+      "main": [
+        [
+          {
+            "node": "Already processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already processed?": {
+      "main": [
+        [
+          {
+            "node": "Skip duplicate file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download file from Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file from Telegram": {
+      "main": [
+        [
+          {
+            "node": "Parse Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Period overlap?": {
+      "main": [
+        [
+          {
+            "node": "Notify period overlap",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get existing lots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop: each missing date": {
+      "main": [
+        [
+          {
+            "node": "Get rate cache final",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch CNB rates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch CNB rates": {
+      "main": [
+        [
+          {
+            "node": "Parse CNB response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save rate (cnb_rate_cache)": {
+      "main": [
+        [
+          {
+            "node": "Loop: each missing date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route writes": {
+      "main": [
+        [
+          {
+            "node": "Save lot (tax_lots)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete sold lot (tax_lots)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save year totals (tax_ytd)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save income (tax_income)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save sale (tax_sales)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Telegram Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mark file processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save lot (tax_lots)": {
+      "main": [
+        []
+      ]
+    },
+    "Delete sold lot (tax_lots)": {
+      "main": [
+        []
+      ]
+    },
+    "Send import summary": {
+      "main": [
+        []
+      ]
+    },
+    "Is command?": {
+      "main": [
+        [
+          {
+            "node": "Report: get sales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is file from me?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report: get rates": {
+      "main": [
+        [
+          {
+            "node": "Report: get income",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan sale": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report: get income": {
+      "main": [
+        [
+          {
+            "node": "Report: get lots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build DAP summary": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build export": {
+      "main": [
+        [
+          {
+            "node": "Send a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which command?": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan sale",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build DAP summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Is command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
