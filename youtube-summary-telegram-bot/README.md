@@ -55,3 +55,23 @@ Telegram → transcript API → GPT → Telegram.
 - **Chunk size / max parts** — `CHUNK_SIZE` and `MAX_CHUNKS` at the top of the `Parse Transcript Text` code node.
 - **More users** — change the `Allowed User?` condition to something like `{{ [111, 222].includes($json.message.chat.id) }}` (boolean "is true").
 - **More commands** — add a rule to the `Route Command` switch and wire a new branch.
+
+## Using Gemini instead of OpenAI
+
+The workflow ships with OpenAI, but Google Gemini Flash works well here and has a free tier. Its large context window also means you can raise `CHUNK_SIZE` so most videos come back as a single message.
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com) (no payment method needed for the free tier).
+2. In n8n, add a **Google Gemini (PaLM) API** credential with that key.
+3. Add a **Google Gemini → Message a model** node, pick a Flash model, and paste the same prompt as in `Summarize With GPT`. Copy the settings too: Retry On Fail (3 tries, 2000 ms) and On Error → Continue (using error output).
+4. Wire it in place of `Summarize With GPT`: `Transcript Error?` (false) → Gemini → `Send Summary Reply`, error output → `OpenAI Summary Failed`. Delete the GPT node.
+5. In `Send Summary Reply`, replace `{{ $json.output[0].content[0].text }}` with:
+
+   ```
+   {{ $json.content.parts[0].text.replace(/^\s*[*-]\s+/gm, '• ').replace(/^#+\s*/gm, '').replace(/^-{3,}\s*$/gm, '').replace(/[*_`\[\]]/g, '') }}
+   ```
+
+   Gemini tends to add Markdown (`*` bullets, `###` headings) even when asked not to. Telegram then rejects the message with *"can't parse entities"*. This expression turns bullets into `•` and strips the rest.
+
+Things to know about the free tier:
+- It has per-minute and per-day request limits. Check the current numbers in AI Studio.
+- Google may use free-tier prompts to improve its products. That's usually fine for public YouTube transcripts, but don't route private data through it. With billing enabled, your data isn't used that way.
