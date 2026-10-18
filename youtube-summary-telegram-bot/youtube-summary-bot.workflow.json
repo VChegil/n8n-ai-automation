@@ -334,7 +334,7 @@
         "responses": {
           "values": [
             {
-              "content": "=This is part {{ $json.part }} of {{ $json.total }} of a YouTube video transcript.\nSummarize only this part.\nGive me:\n1. A short summary (2-3 sentences)\n2. The most useful/interesting points as bullets\n\nTranscript:\n{{ $json.transcript_only_text }}"
+              "content": "=This is part {{ $json.part }} of {{ $json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nReply in exactly this format, plain text, no markdown, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(5-8 points, one line each)\n\nTranscript:\n{{ $json.transcript_only_text }}"
             }
           ]
         },
