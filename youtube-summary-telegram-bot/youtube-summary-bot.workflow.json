@@ -1,0 +1,561 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        100
+      ],
+      "id": "d158ced5-fecc-4a5c-aea5-f1f1fd18ff12",
+      "name": "Telegram Trigger",
+      "webhookId": "342944c3-fbe7-417b-9b2d-40cf8aea10bd",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a1f0c3d2-0001-4c1a-9a01-000000000001",
+              "leftValue": "={{ $json.message.chat.id }}",
+              "rightValue": 123456789,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        220,
+        100
+      ],
+      "id": "a1f0c3d2-0001-4c1a-9a01-0000000000a1",
+      "name": "Allowed User?"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6752c6a8-3949-4e32-8784-c21db02b41f0",
+                    "leftValue": "={{ $json.message.text || '' }}",
+                    "rightValue": "/yt",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        100
+      ],
+      "id": "3341b190-c8a8-4c25-a7c0-2d50ebc5aeb7",
+      "name": "Route Command"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "I didn't recognize that command. Here's what I can do:\n\n/yt <youtube link> - Summarize a YouTube video\n\nMore commands coming soon!",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        260
+      ],
+      "id": "ad4f372c-ffb1-4731-bca4-b621ef70681d",
+      "name": "Unknown Command Reply",
+      "webhookId": "610587cf-b5f6-4feb-a36e-ed92f92a40f3",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.message.text || '';\nconst match = text.match(/(?:v=|youtu\\.be\\/|shorts\\/|live\\/)([\\w-]{11})/);\n\nreturn [{ json: { videoId: match ? match[1] : '' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "e0b39ee3-d55e-4cfd-bdde-3bed67652167",
+      "name": "Extract YouTube Video ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2b46b88d-5fda-4262-bca8-5cf6bf642f42",
+              "leftValue": "={{ $json.videoId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "5d22a299-d2bd-4572-bb44-9b3662b11969",
+      "name": "Missing Video ID?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "Send me a YouTube link, like:\n/yt https://youtu.be/xxxxxxxxxxx",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        -140
+      ],
+      "id": "0473551c-67ce-4139-a2d8-db9c8e8fc873",
+      "name": "Ask For Link",
+      "webhookId": "b3b5c2bf-a57e-4467-92f6-fe17f3a38345",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "⏳ Got it, fetching the transcript...",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        60
+      ],
+      "id": "7566a9e0-8935-4f71-9a12-83d3d30cd264",
+      "name": "Processing Message",
+      "webhookId": "c4d2e1f0-7a6b-4c3d-9e8f-1a2b3c4d5e6f",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://transcriptapi.com/api/v2/youtube/transcript",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "video_url",
+              "value": "={{ $('Extract YouTube Video ID').first().json.videoId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1320,
+        60
+      ],
+      "id": "d949941a-3fef-49fc-8808-98f7a5c9aeb0",
+      "name": "Fetch Transcript",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 4000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "PLACEHOLDER",
+          "name": "TranscriptAPI token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const data = $input.first().json;\n  const transcript = data.transcript || data[0]?.transcript;\n  if (!transcript) throw new Error('no transcript');\n\n  const fullText = transcript.map(t => t.text).join(' ');\n\n  const CHUNK_SIZE = 40000; // ~10k tokens per part\n  const MAX_CHUNKS = 5;     // cap to avoid spam and cost\n\n  const chunks = [];\n  let start = 0;\n  while (start < fullText.length && chunks.length < MAX_CHUNKS) {\n    let end = Math.min(start + CHUNK_SIZE, fullText.length);\n    if (end < fullText.length) {\n      const lastSpace = fullText.lastIndexOf(' ', end);\n      if (lastSpace > start) end = lastSpace;\n    }\n    chunks.push(fullText.slice(start, end).trim());\n    start = end;\n  }\n\n  const truncated = start < fullText.length;\n  const total = chunks.length;\n\n  return chunks.map((text, i) => ({\n    json: { transcript_only_text: text, part: i + 1, total, truncated, error: false },\n    pairedItem: { item: 0 }\n  }));\n} catch (e) {\n  return [{ json: { error: true }, pairedItem: { item: 0 } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        60
+      ],
+      "id": "20289b4d-4ad6-4dae-9fb5-e8ce2ac372be",
+      "name": "Parse Transcript Text"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "281275df-71ae-49d2-b129-daa3d83d62b3",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1760,
+        60
+      ],
+      "id": "701dcd1b-81a0-4fe4-af42-f23d912c4989",
+      "name": "Transcript Error?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "Couldn't get a transcript for that video. It may have no captions. Try another link.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1980,
+        -100
+      ],
+      "id": "437fd73d-10b0-44e9-b62e-dac00408f3b4",
+      "name": "Transcript Error Reply",
+      "webhookId": "d5e3f2a1-8b7c-4d4e-0f9a-2b3c4d5e6f7a",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.4-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-5.4-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=This is part {{ $json.part }} of {{ $json.total }} of a YouTube video transcript.\nSummarize only this part.\nGive me:\n1. A short summary (2-3 sentences)\n2. The most useful/interesting points as bullets\n\nTranscript:\n{{ $json.transcript_only_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1980,
+        160
+      ],
+      "id": "49b3b9e5-2091-4007-b270-d434a34dfcf1",
+      "name": "Summarize With GPT",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $('Parse Transcript Text').item.json.total > 1 ? '📄 Part ' + $('Parse Transcript Text').item.json.part + '/' + $('Parse Transcript Text').item.json.total + '\\n\\n' : '' }}{{ $json.output[0].content[0].text }}{{ $('Parse Transcript Text').item.json.truncated && $('Parse Transcript Text').item.json.part === $('Parse Transcript Text').item.json.total ? '\\n\\n⚠️ Video was very long, only the first ' + $('Parse Transcript Text').item.json.total + ' parts were summarized.' : '' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2300,
+        80
+      ],
+      "id": "e3ee2160-9658-4050-a783-c20b6e940e3a",
+      "name": "Send Summary Reply",
+      "webhookId": "8e4005b2-a885-485f-9fc1-b18a95d0bd5e",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "Summary failed, try again later.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2300,
+        280
+      ],
+      "id": "72b5519f-b1b1-4129-8ed7-812b6068ccee",
+      "name": "OpenAI Summary Failed",
+      "webhookId": "e6f4a3b2-9c8d-4e5f-1a0b-3c4d5e6f7a8b",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Allowed User?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed User?": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Extract YouTube Video ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Command Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract YouTube Video ID": {
+      "main": [
+        [
+          {
+            "node": "Missing Video ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Missing Video ID?": {
+      "main": [
+        [
+          {
+            "node": "Ask For Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processing Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processing Message": {
+      "main": [
+        [
+          {
+            "node": "Fetch Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Transcript": {
+      "main": [
+        [
+          {
+            "node": "Parse Transcript Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Transcript Text": {
+      "main": [
+        [
+          {
+            "node": "Transcript Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript Error?": {
+      "main": [
+        [
+          {
+            "node": "Transcript Error Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summarize With GPT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize With GPT": {
+      "main": [
+        [
+          {
+            "node": "Send Summary Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI Summary Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
