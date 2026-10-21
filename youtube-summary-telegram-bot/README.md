@@ -24,7 +24,7 @@ The summary is written in the same language as the video.
 
 ![n8n workflow](images/workflow-canvas.png)
 
-*A real run on a 3-part video. Gemini was overloaded here, so all three parts went through the GPT fallback, and the final summary was written by Gemini.*
+*A real run on a 3-part video. Gemini was overloaded during this run, so the parts went through the GPT fallback.*
 
 ## Stack
 
