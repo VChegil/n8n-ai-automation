@@ -22,6 +22,10 @@ Telegram → transcript API → Gemini (GPT as fallback) → Telegram.
 
 The summary is written in the same language as the video.
 
+![n8n workflow](images/workflow-canvas.png)
+
+*A real run on a 3-part video. Gemini was overloaded here, so all three parts went through the GPT fallback, and the final summary was written by Gemini.*
+
 ## Stack
 
 - **n8n**: orchestration
