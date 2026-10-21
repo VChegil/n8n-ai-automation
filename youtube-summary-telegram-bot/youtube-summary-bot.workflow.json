@@ -10,10 +10,10 @@
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
       "position": [
-        0,
-        100
+        -160,
+        64
       ],
-      "id": "d158ced5-fecc-4a5c-aea5-f1f1fd18ff12",
+      "id": "9d09634e-9601-41f8-924e-89146555c9af",
       "name": "Telegram Trigger",
       "webhookId": "342944c3-fbe7-417b-9b2d-40cf8aea10bd",
       "credentials": {
@@ -50,10 +50,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        220,
-        100
+        64,
+        64
       ],
-      "id": "a1f0c3d2-0001-4c1a-9a01-0000000000a1",
+      "id": "751cd808-fc9a-42e0-9a29-13e3bd8a9123",
       "name": "Allowed User?"
     },
     {
@@ -91,10 +91,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        440,
-        100
+        288,
+        64
       ],
-      "id": "3341b190-c8a8-4c25-a7c0-2d50ebc5aeb7",
+      "id": "13f83e9c-b27a-4497-99c3-4f3dabd96059",
       "name": "Route Command"
     },
     {
@@ -108,10 +108,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        660,
-        260
+        512,
+        160
       ],
-      "id": "ad4f372c-ffb1-4731-bca4-b621ef70681d",
+      "id": "5682000d-1ae0-48ba-ad63-8b47b35ac629",
       "name": "Unknown Command Reply",
       "webhookId": "610587cf-b5f6-4feb-a36e-ed92f92a40f3",
       "credentials": {
@@ -128,10 +128,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        0
+        512,
+        -32
       ],
-      "id": "e0b39ee3-d55e-4cfd-bdde-3bed67652167",
+      "id": "2b77f6ac-42bd-470b-901f-9f41e06e587a",
       "name": "Extract YouTube Video ID"
     },
     {
@@ -162,10 +162,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        880,
-        0
+        736,
+        -32
       ],
-      "id": "5d22a299-d2bd-4572-bb44-9b3662b11969",
+      "id": "eda2b2c1-cb83-4776-9d97-663cea2e8663",
       "name": "Missing Video ID?"
     },
     {
@@ -179,10 +179,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1100,
-        -140
+        960,
+        -128
       ],
-      "id": "0473551c-67ce-4139-a2d8-db9c8e8fc873",
+      "id": "a91cafdd-1a17-4711-9519-090cce1563eb",
       "name": "Ask For Link",
       "webhookId": "b3b5c2bf-a57e-4467-92f6-fe17f3a38345",
       "credentials": {
@@ -203,10 +203,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1100,
-        60
+        960,
+        64
       ],
-      "id": "7566a9e0-8935-4f71-9a12-83d3d30cd264",
+      "id": "5be29ad0-eaa2-4c35-b7fd-11450453165a",
       "name": "Processing Message",
       "webhookId": "c4d2e1f0-7a6b-4c3d-9e8f-1a2b3c4d5e6f",
       "credentials": {
@@ -227,6 +227,10 @@
             {
               "name": "video_url",
               "value": "={{ $('Extract YouTube Video ID').first().json.videoId }}"
+            },
+            {
+              "name": "language",
+              "value": "uk,en,asr"
             }
           ]
         },
@@ -235,21 +239,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1320,
-        60
+        1184,
+        64
       ],
-      "id": "d949941a-3fef-49fc-8808-98f7a5c9aeb0",
+      "id": "6e7ab893-2bce-4e1a-a958-f096047def82",
       "name": "Fetch Transcript",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 4000,
-      "onError": "continueRegularOutput",
       "credentials": {
         "httpBearerAuth": {
           "id": "PLACEHOLDER",
           "name": "TranscriptAPI token"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -258,10 +262,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        60
+        1408,
+        64
       ],
-      "id": "20289b4d-4ad6-4dae-9fb5-e8ce2ac372be",
+      "id": "d4cf2bf9-6876-42a3-af4c-6aa634d9f441",
       "name": "Parse Transcript Text"
     },
     {
@@ -292,10 +296,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1760,
-        60
+        1632,
+        64
       ],
-      "id": "701dcd1b-81a0-4fe4-af42-f23d912c4989",
+      "id": "9b5b0fff-9ff1-4ab7-94b3-5e0631c3fbeb",
       "name": "Transcript Error?"
     },
     {
@@ -309,13 +313,77 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1980,
-        -100
+        1920,
+        -32
       ],
-      "id": "437fd73d-10b0-44e9-b62e-dac00408f3b4",
+      "id": "f0172088-3d63-417c-85b5-54eea378a814",
       "name": "Transcript Error Reply",
       "webhookId": "d5e3f2a1-8b7c-4d4e-0f9a-2b3c4d5e6f7a",
       "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.8-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.8-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=This is part {{ $json.part }} of {{ $json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $json.transcript_only_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1856,
+        160
+      ],
+      "id": "aeea9498-5a64-4be6-a640-3836e5d96753",
+      "name": "Summarize With Gemini",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PLACEHOLDER",
+          "name": "Google Gemini account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $('Parse Transcript Text').item.json.total > 1 ? '📄 Part ' + $('Parse Transcript Text').item.json.part + '/' + $('Parse Transcript Text').item.json.total + '\\n\\n' : '' }}{{ ($json.content?.parts?.[0]?.text ?? $json.output?.[0]?.content?.[0]?.text ?? '').replace(/^\\s*[*-]\\s+/gm, '• ').replace(/^#+\\s*/gm, '').replace(/^-{3,}\\s*$/gm, '').replace(/[*_`\\[\\]]/g, '') }}{{ $('Parse Transcript Text').item.json.truncated && $('Parse Transcript Text').item.json.part === $('Parse Transcript Text').item.json.total ? '\\n\\n⚠️ Video was very long, only the first ' + $('Parse Transcript Text').item.json.total + ' parts were summarized.' : '' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2560,
+        64
+      ],
+      "id": "f81b964f-225b-4a5f-93f1-a0aab22883bc",
+      "name": "Send Summary Reply",
+      "webhookId": "8e4005b2-a885-485f-9fc1-b18a95d0bd5e",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -334,7 +402,7 @@
         "responses": {
           "values": [
             {
-              "content": "=This is part {{ $json.part }} of {{ $json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nReply in exactly this format, plain text, no markdown, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(5-8 points, one line each)\n\nTranscript:\n{{ $json.transcript_only_text }}"
+              "content": "=This is part {{ $('Parse Transcript Text').item.json.part }} of {{ $('Parse Transcript Text').item.json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $('Parse Transcript Text').item.json.transcript_only_text }}"
             }
           ]
         },
@@ -344,48 +412,21 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 2.1,
       "position": [
-        1980,
-        160
+        2208,
+        232
       ],
-      "id": "49b3b9e5-2091-4007-b270-d434a34dfcf1",
-      "name": "Summarize With GPT",
+      "id": "bb1860db-493b-42c6-9bfe-43bcde1d6eca",
+      "name": "Fallback: Summarize With GPT",
       "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
-      "onError": "continueErrorOutput",
+      "waitBetweenTries": 3000,
       "credentials": {
         "openAiApi": {
           "id": "PLACEHOLDER",
           "name": "OpenAI account"
         }
-      }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
-        "text": "={{ $('Parse Transcript Text').item.json.total > 1 ? '📄 Part ' + $('Parse Transcript Text').item.json.part + '/' + $('Parse Transcript Text').item.json.total + '\\n\\n' : '' }}{{ $json.output[0].content[0].text }}{{ $('Parse Transcript Text').item.json.truncated && $('Parse Transcript Text').item.json.part === $('Parse Transcript Text').item.json.total ? '\\n\\n⚠️ Video was very long, only the first ' + $('Parse Transcript Text').item.json.total + ' parts were summarized.' : '' }}",
-        "additionalFields": {
-          "appendAttribution": false
-        }
       },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2300,
-        80
-      ],
-      "id": "e3ee2160-9658-4050-a783-c20b6e940e3a",
-      "name": "Send Summary Reply",
-      "webhookId": "8e4005b2-a885-485f-9fc1-b18a95d0bd5e",
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 1500,
-      "credentials": {
-        "telegramApi": {
-          "id": "PLACEHOLDER",
-          "name": "Telegram bot"
-        }
-      }
+      "onError": "continueErrorOutput",
+      "maxTries": 3
     },
     {
       "parameters": {
@@ -398,12 +439,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2300,
+        2560,
         280
       ],
-      "id": "72b5519f-b1b1-4129-8ed7-812b6068ccee",
-      "name": "OpenAI Summary Failed",
-      "webhookId": "e6f4a3b2-9c8d-4e5f-1a0b-3c4d5e6f7a8b",
+      "id": "4002f447-5581-4e4a-bd04-064562f08985",
+      "name": "Summary Failed",
+      "webhookId": "35cab695-7975-4f7f-8119-81c9f135cc40",
       "executeOnce": true,
       "credentials": {
         "telegramApi": {
@@ -433,8 +474,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "Route Command": {
@@ -528,14 +568,14 @@
         ],
         [
           {
-            "node": "Summarize With GPT",
+            "node": "Summarize With Gemini",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Summarize With GPT": {
+    "Summarize With Gemini": {
       "main": [
         [
           {
@@ -546,7 +586,25 @@
         ],
         [
           {
-            "node": "OpenAI Summary Failed",
+            "node": "Fallback: Summarize With GPT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback: Summarize With GPT": {
+      "main": [
+        [
+          {
+            "node": "Send Summary Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summary Failed",
             "type": "main",
             "index": 0
           }
