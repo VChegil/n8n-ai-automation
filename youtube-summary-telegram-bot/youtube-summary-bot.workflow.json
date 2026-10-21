@@ -15,7 +15,7 @@
       ],
       "id": "9d09634e-9601-41f8-924e-89146555c9af",
       "name": "Telegram Trigger",
-      "webhookId": "342944c3-fbe7-417b-9b2d-40cf8aea10bd",
+      "webhookId": "f761c640-a8a6-4e65-900e-70d44f7ad931",
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -113,7 +113,7 @@
       ],
       "id": "5682000d-1ae0-48ba-ad63-8b47b35ac629",
       "name": "Unknown Command Reply",
-      "webhookId": "610587cf-b5f6-4feb-a36e-ed92f92a40f3",
+      "webhookId": "44581d61-59eb-4917-b37b-c233ff1b4499",
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -184,7 +184,7 @@
       ],
       "id": "a91cafdd-1a17-4711-9519-090cce1563eb",
       "name": "Ask For Link",
-      "webhookId": "b3b5c2bf-a57e-4467-92f6-fe17f3a38345",
+      "webhookId": "bf350376-3716-4ee0-8589-8dcbfea48f05",
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -208,7 +208,7 @@
       ],
       "id": "5be29ad0-eaa2-4c35-b7fd-11450453165a",
       "name": "Processing Message",
-      "webhookId": "c4d2e1f0-7a6b-4c3d-9e8f-1a2b3c4d5e6f",
+      "webhookId": "2d015662-378b-430f-bc3e-10c255f29711",
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -318,7 +318,7 @@
       ],
       "id": "f0172088-3d63-417c-85b5-54eea378a814",
       "name": "Transcript Error Reply",
-      "webhookId": "d5e3f2a1-8b7c-4d4e-0f9a-2b3c4d5e6f7a",
+      "webhookId": "133d958b-bc1c-457b-a858-e4180fd720e9",
       "executeOnce": true,
       "credentials": {
         "telegramApi": {
@@ -355,7 +355,7 @@
       "name": "Summarize With Gemini",
       "retryOnFail": true,
       "maxTries": 2,
-      "waitBetweenTries": 3000,
+      "waitBetweenTries": 5000,
       "credentials": {
         "googlePalmApi": {
           "id": "PLACEHOLDER",
@@ -380,7 +380,7 @@
       ],
       "id": "f81b964f-225b-4a5f-93f1-a0aab22883bc",
       "name": "Send Summary Reply",
-      "webhookId": "8e4005b2-a885-485f-9fc1-b18a95d0bd5e",
+      "webhookId": "e1204b32-1ed9-4f25-9afb-aaa1eb6f48a2",
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 1500,
@@ -413,7 +413,7 @@
       "typeVersion": 2.1,
       "position": [
         2208,
-        232
+        240
       ],
       "id": "bb1860db-493b-42c6-9bfe-43bcde1d6eca",
       "name": "Fallback: Summarize With GPT",
@@ -425,8 +425,7 @@
           "name": "OpenAI account"
         }
       },
-      "onError": "continueErrorOutput",
-      "maxTries": 3
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -440,12 +439,163 @@
       "typeVersion": 1.2,
       "position": [
         2560,
-        280
+        288
       ],
       "id": "4002f447-5581-4e4a-bd04-064562f08985",
       "name": "Summary Failed",
-      "webhookId": "35cab695-7975-4f7f-8119-81c9f135cc40",
+      "webhookId": "de77b5dc-257f-4e99-ae6d-8ab0c97c3cd2",
       "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "result.text",
+              "renameField": true,
+              "outputFieldName": "parts"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2784,
+        64
+      ],
+      "id": "b2c0a36b-e5ba-4029-8520-07596cf021fd",
+      "name": "Aggregate Parts"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a1ca14f7-1a86-447d-984b-8a2fc26dfb12",
+              "leftValue": "={{ $json.parts.length }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3008,
+        64
+      ],
+      "id": "59a6e1cf-115b-4242-8d79-a1bf00c22a01",
+      "name": "Multiple Parts?"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.7-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.7-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Below are summaries of consecutive parts of one YouTube video.\nWrite one summary of the whole video based on them.\n\nWrite in the same language as the part summaries.\nReply in exactly this format, plain text, no markdown, no intro sentence:\n\nSummary:\n<2-3 sentences about the whole video>\n\nKey points:\n• <point>\n(3-5 most important points across all parts, no repetition)\n\nPart summaries:\n{{ $json.parts.join('\\n\\n') }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        3232,
+        64
+      ],
+      "id": "cb7c1c6c-807b-458b-af04-00fa46909b08",
+      "name": "Final Summary (Gemini)",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PLACEHOLDER",
+          "name": "Google Gemini account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.4-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-5.4-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Below are summaries of consecutive parts of one YouTube video.\nWrite one summary of the whole video based on them.\n\nWrite in the same language as the part summaries.\nReply in exactly this format, plain text, no markdown, no intro sentence:\n\nSummary:\n<2-3 sentences about the whole video>\n\nKey points:\n• <point>\n(3-5 most important points across all parts, no repetition)\n\nPart summaries:\n{{ $('Aggregate Parts').first().json.parts.join('\\n\\n') }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        3584,
+        144
+      ],
+      "id": "2c4693bc-71a5-4890-8b83-2c136af46d77",
+      "name": "Final Summary (GPT)",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER",
+          "name": "OpenAI account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "=📌 Whole video summary:\n\n{{ ($json.content?.parts?.[0]?.text ?? $json.output?.[0]?.content?.[0]?.text ?? '').replace(/^\\s*[*-]\\s+/gm, '• ').replace(/^#+\\s*/gm, '').replace(/^-{3,}\\s*$/gm, '').replace(/[*_`\\[\\]]/g, '') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3936,
+        64
+      ],
+      "id": "ae874cbd-d63b-48aa-bdd2-019cc182e034",
+      "name": "Send Final Summary",
+      "webhookId": "f33b4370-4443-40bf-a860-f52fa2528232",
       "credentials": {
         "telegramApi": {
           "id": "PLACEHOLDER",
@@ -593,6 +743,50 @@
         ]
       ]
     },
+    "Send Summary Reply": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Parts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Parts": {
+      "main": [
+        [
+          {
+            "node": "Multiple Parts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Multiple Parts?": {
+      "main": [
+        [
+          {
+            "node": "Final Summary (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Summary (GPT)": {
+      "main": [
+        [
+          {
+            "node": "Send Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Fallback: Summarize With GPT": {
       "main": [
         [
@@ -605,6 +799,24 @@
         [
           {
             "node": "Summary Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Summary (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Send Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Summary (GPT)",
             "type": "main",
             "index": 0
           }
