@@ -1,6 +1,6 @@
 # YouTube Summary Telegram Bot
 
-Send the bot `/yt <youtube link>` and it replies with a summary of the video: a short overview plus the key points. Long videos are split into parts and summarized one message per part.
+Send the bot `/yt <youtube link>` and it replies with a summary of the video: a short overview plus the key points. Long videos are split into parts, summarized one message per part, and finished with one summary of the whole video.
 
 <img src="images/telegram-example.png" alt="Example reply in Telegram" width="400">
 
@@ -18,6 +18,7 @@ Telegram → transcript API → Gemini (GPT as fallback) → Telegram.
 4. Splits long transcripts into parts (40k chars each, max 5)
 5. Summarizes each part with **Gemini Flash** (free tier). If Gemini fails, **GPT** takes over automatically
 6. Sends each part back as `📄 Part 1/3`, `📄 Part 2/3`...
+7. For multi-part videos, combines the part summaries into one final `📌 Whole video summary` (same Gemini → GPT fallback)
 
 The summary is written in the same language as the video.
 
@@ -41,6 +42,8 @@ The summary is written in the same language as the video.
 | Gemini and GPT both fail | "Summary failed, try again later" (sent once, not once per part) |
 | Model replies with Markdown | Cleaned up before sending, so Telegram doesn't reject it |
 | Very long video (3h+ podcast) | First 5 parts summarized, warning on the last message |
+| Multi-part video | Part messages, then one summary of the whole video |
+| Final summary fails on both models | Skipped quietly, the part summaries were already sent |
 | Slow processing | "⏳ Got it, fetching the transcript..." right away |
 
 ## Design decisions
@@ -49,6 +52,7 @@ The summary is written in the same language as the video.
 - **Chunking without a loop node.** The Code node returns one item per chunk, and n8n runs the model and Telegram nodes once per item. Capped at 5 parts so a 4-hour stream can't burn through credits or flood the chat.
 - **Allowlist right after the trigger.** Bot usernames are public. Without it, anyone who finds the bot can spend your API credits.
 - **Error reply on every path.** A bot that goes silent looks broken. Each failure point has its own message, and the summary-failed message is set to Execute Once.
+- **Map-reduce for long videos.** Each part is summarized on its own (map), then the part summaries are combined in one final pass (reduce), so the overall summary connects ideas across parts. The final step runs after `Send Summary Reply`, which guarantees the parts arrive first, and only for videos with more than one part. Suggested by several people in the Reddit thread about v1.
 - **One reply node for both models.** Its expression reads either Gemini's or OpenAI's response shape, so both success paths share the same formatting and Markdown cleanup.
 
 ## Setup
@@ -57,8 +61,8 @@ The summary is written in the same language as the video.
 2. **Credentials**: create these and select them in the matching nodes (all set to `PLACEHOLDER` in the export):
    - **Telegram API**: bot token from [@BotFather](https://t.me/BotFather). Used by the trigger and all reply nodes.
    - **Bearer Auth**: your TranscriptAPI key. Used by `Fetch Transcript`.
-   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by `Summarize With Gemini`.
-   - **OpenAI API**: used by `Fallback: Summarize With GPT`.
+   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by `Summarize With Gemini` and `Final Summary (Gemini)`.
+   - **OpenAI API**: used by `Fallback: Summarize With GPT` and `Final Summary (GPT)`.
 3. **Allowlist**: in `Allowed User?`, replace `123456789` with your Telegram chat ID. Easiest way to find it: activate the workflow, message the bot, and read `message.chat.id` from the Telegram Trigger output in the execution log.
 4. **Models**: pick a stable Flash model in the Gemini node (stable versions get overloaded less often than preview ones). The fallback uses `gpt-5.4-mini`.
 5. **Optional, recommended**: in workflow settings, set an Error Workflow to get notified when a run fails, and enable Timeout Workflow (5 minutes is plenty).
@@ -66,9 +70,10 @@ The summary is written in the same language as the video.
 
 ## Customization
 
-- **Summary format or language**: edit the prompt in both `Summarize With Gemini` and `Fallback: Summarize With GPT`. To always get, for example, Ukrainian, replace the language line with `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
+- **Summary format or language**: edit the prompts in `Summarize With Gemini`, `Fallback: Summarize With GPT` and both `Final Summary` nodes. To always get, for example, Ukrainian, replace the language line with `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
 - **Transcript language priority**: the `language` query parameter in `Fetch Transcript` (default `uk,en,asr`). Codes are tried left to right, and `asr` means auto-generated captions in the original language. Change it to e.g. `de,en,asr` for German.
 - **Chunk size / max parts**: `CHUNK_SIZE` and `MAX_CHUNKS` at the top of the `Parse Transcript Text` code node.
+- **Skip the final summary**: delete the nodes after `Send Summary Reply`.
 - **Faster fallback**: lower Max Tries on `Summarize With Gemini` to switch to GPT sooner.
 - **Only one model**: delete the GPT node and connect Gemini's error output straight to `Summary Failed`. Or swap them, if you prefer paying for reliability.
 - **More users**: change the `Allowed User?` condition to something like `{{ [111, 222].includes($json.message.chat.id) }}` (boolean "is true").
