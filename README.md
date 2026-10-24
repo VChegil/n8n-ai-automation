@@ -13,7 +13,7 @@ Each workflow demonstrates a different automation pattern — webhook triggers, 
 | [🇨🇿 Czech Investment Tax Bot](./n8n-czech-investment-tax-bot) | Telegram bot that calculates Czech taxes on Trading 212 / IBKR investments: FIFO, 3-year test, 100k limit, ČNB rates, tax-return summary | Telegram · n8n Data Tables · ČNB API |
 | [📋 Daily Summary](./clickup-ai-daily-summary) | Fetches active ClickUp tasks and generates a structured daily report (Google Doc + email) | ClickUp · Claude · Google Docs · Gmail |
 | [✍️ Content Brief Generator](./clickup-content-brief) | Auto-generates a content brief when a tag is added to a ClickUp task | ClickUp Webhook · Claude · Google Docs |
-| [▶️ YouTube Summary Bot](./youtube-summary-telegram-bot) | Telegram bot that summarizes YouTube videos from a link, splitting long videos into parts, with a Gemini → GPT fallback | Telegram · TranscriptAPI · Gemini · OpenAI |
+| [▶️ YouTube Summary Bot + Video Memory](./youtube-summary-telegram-bot) | Telegram bot that summarizes YouTube videos and stores them in a self-hosted vector DB, searchable from Claude via MCP with timestamped sources | Telegram · TranscriptAPI · OpenAI · Gemini · Qdrant · MCP |
 
 *More workflows coming — focused on agency, content, and SaaS automation use cases.*
 

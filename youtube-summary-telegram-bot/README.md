@@ -1,26 +1,49 @@
-# YouTube Summary Telegram Bot
+# YouTube Summary Bot + Searchable Video Memory (RAG + MCP)
 
-Send the bot `/yt <youtube link>` and it replies with a summary of the video: a short overview plus the key points. Long videos are split into parts, summarized one message per part, and finished with one summary of the whole video.
+Send the bot `/yt <youtube link>` in Telegram and it replies with a summary of the video. Every video is also stored in a self-hosted vector database, so later you can ask Claude questions like *"what did that video say about handling provocation?"* and get an answer with links to the exact second in the video.
 
 <img src="images/telegram-example.png" alt="Example reply in Telegram" width="400">
 
 ## Problem
 
-Watching a 40-minute video to find out whether it's worth 40 minutes is a bad trade. Most of the time you only need the main points.
+Watching a 40-minute video to find out whether it's worth 40 minutes is a bad trade. And a week later, when you need that one idea from it, you can't find it again.
 
 ## Solution
 
-Telegram → transcript API → Gemini (GPT as fallback) → Telegram.
+Two n8n workflows:
+
+| Workflow | What it does |
+|---|---|
+| `youtube-summary-bot.workflow.json` | Telegram bot: summarizes the video **and** stores its transcript in Qdrant |
+| `youtube-memory-mcp.workflow.json` | MCP server: lets Claude (or any MCP client) search the stored transcripts |
+
+```
+Telegram /yt ──► Transcript ──┬──► GPT summary (Gemini fallback) ──► Telegram
+                              │
+                              └──► Time-based chunks ──► Gemini embeddings ──► Qdrant (self-hosted)
+                                                                                  ▲
+Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigger ──► search ──┘
+```
+
+### Summary flow
 
 1. User sends `/yt https://youtu.be/...`
 2. The bot extracts the video ID (supports `watch?v=`, `youtu.be/`, `shorts/`, `live/`)
-3. Fetches the transcript from [TranscriptAPI](https://transcriptapi.com), preferring Ukrainian, then English, then the original auto-generated captions
+3. Fetches the transcript and video metadata from [TranscriptAPI](https://transcriptapi.com), preferring Ukrainian, then English, then the original auto-generated captions
 4. Splits long transcripts into parts (40k chars each, max 5)
-5. Summarizes each part with **Gemini Flash** (free tier). If Gemini fails, **GPT** takes over automatically
+5. Summarizes each part with **GPT**. If GPT fails, **Gemini** takes over automatically
 6. Sends each part back as `📄 Part 1/3`, `📄 Part 2/3`...
-7. For multi-part videos, combines the part summaries into one final `📌 Whole video summary` (same Gemini → GPT fallback)
+7. For multi-part videos, combines the part summaries into one final `📌 Whole video summary` (Gemini first, GPT fallback)
 
-The summary is written in the same language as the video.
+### Memory flow (RAG)
+
+1. **Delete old points** for this `video_id`, so sending a video again refreshes it instead of duplicating it
+2. **Build chunks** from the timestamped transcript lines: ~900 characters (about a minute of speech), 2 lines of overlap, and a header with the video title and channel
+3. **Embed** each chunk with `gemini-embedding-001` and store it in Qdrant with metadata: `video_id`, `title`, `channel`, `url` (with `?t=` timestamp), `start`, `chunk`, `language`
+
+### Ask flow (MCP)
+
+The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when to call it, gets the 5 most relevant chunks, and answers with sources that jump to the right moment.
 
 **Part 1: from the Telegram message to the per-part summaries**
 
@@ -30,66 +53,104 @@ The summary is written in the same language as the video.
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*Real runs on a 3-part video. Gemini was overloaded during these runs, so the GPT fallback took over.*
+*These screenshots show the summary part of the bot. The memory branch (Delete Old Points → Build Chunks → Qdrant) runs alongside it.*
 
 ## Stack
 
-- **n8n**: orchestration
+- **n8n**: orchestration and MCP server
 - **Telegram Bot API**: trigger and replies
-- **TranscriptAPI**: YouTube transcripts
-- **Google Gemini Flash**: main summarizer (free tier)
-- **OpenAI**: fallback summarizer
+- **TranscriptAPI**: YouTube transcripts with timestamps and metadata
+- **OpenAI**: main summarizer
+- **Google Gemini**: fallback summarizer (free tier) and embeddings (`gemini-embedding-001`)
+- **Qdrant**: vector database, self-hosted next to n8n
+- **Claude**: asks questions over the stored videos through MCP
 
 ## Edge cases handled
 
-| Situation | What the user gets |
+| Situation | What happens |
 |---|---|
-| Message from someone not on the allowlist | Nothing (ignored, no API cost) |
+| Message from someone not on the allowlist | Ignored, no API cost |
 | Random text, sticker, photo, voice | "I didn't recognize that command" + help |
 | `/yt` without a valid link | "Send me a YouTube link" + example |
 | Video with no captions / API failure | "Couldn't get a transcript..." (after 1 retry) |
-| Gemini overloaded or down | Summary from GPT instead, the user doesn't notice |
-| Gemini and GPT both fail | "Summary failed, try again later" (sent once, not once per part) |
+| GPT down | Summary from Gemini instead |
+| GPT and Gemini both fail | "Summary failed, try again later" (sent once, not once per part) |
 | Model replies with Markdown | Cleaned up before sending, so Telegram doesn't reject it |
-| Very long video (3h+ podcast) | First 5 parts summarized, warning on the last message |
+| Very long video (3h+ podcast) | First 5 parts summarized, warning on the last message; the full transcript is still stored |
 | Multi-part video | Part messages, then one summary of the whole video |
-| Final summary fails on both models | Skipped quietly, the part summaries were already sent |
-| Slow processing | "⏳ Got it, fetching the transcript..." right away |
+| Same video sent twice | Old chunks deleted first, so no duplicates in search results |
+| First video ever (collection doesn't exist yet) | Delete step fails quietly, collection is created on insert |
+| MCP URL leaks | Useless without the `x-api-key` token |
 
 ## Design decisions
 
-- **Gemini first, GPT as fallback.** Gemini's free tier covers personal use at no cost, but it gets overloaded at times. Routing its error output to GPT keeps the bot reliable, and OpenAI is only paid for when Gemini fails.
-- **Chunking without a loop node.** The Code node returns one item per chunk, and n8n runs the model and Telegram nodes once per item. Capped at 5 parts so a 4-hour stream can't burn through credits or flood the chat.
+- **Time-based chunks with a context header.** Chunks follow the transcript's own lines and keep their start time, so every search result can link to `youtu.be/ID?t=123`. The header (`Video: <title> (<channel>)`) makes each chunk self-describing, which improves retrieval and lets Claude cite the source.
+- **Chunk in one place only.** Build Chunks does the chunking, and the Data Loader's splitter is set to 2000 characters so it never cuts again. With the default 1000-character splitter, chunks slightly over the limit were split right after the header line, producing title-only points that matched every query. Claude got 5 titles and no content.
+- **Delete-then-insert per video.** A filter delete on `metadata.video_id` before inserting keeps the collection free of duplicates without tracking state anywhere else.
+- **Qdrant not exposed to the internet.** It runs on the same Docker network as n8n, with no public port. The dashboard is reached through an SSH tunnel.
+- **MCP protected with a header token.** Claude's custom connectors can send fixed request headers, so the MCP Server Trigger uses Header Auth (`x-api-key`) instead of relying on a secret URL alone.
+- **GPT first for summaries, Gemini as fallback.** In testing, Gemini sometimes took minutes on short videos when overloaded. GPT is fast and cheap; Gemini only runs when GPT fails. The whole-video summary works on short inputs, so it tries Gemini first.
+- **Map-reduce for long videos.** Each part is summarized on its own, then the part summaries are combined in one final pass. Suggested by several people in the Reddit thread about v1.
 - **Allowlist right after the trigger.** Bot usernames are public. Without it, anyone who finds the bot can spend your API credits.
-- **Error reply on every path.** A bot that goes silent looks broken. Each failure point has its own message, and the summary-failed message is set to Execute Once.
-- **Map-reduce for long videos.** Each part is summarized on its own (map), then the part summaries are combined in one final pass (reduce), so the overall summary connects ideas across parts. The final step runs after `Send Summary Reply`, which guarantees the parts arrive first, and only for videos with more than one part. Suggested by several people in the Reddit thread about v1.
-- **One reply node for both models.** Its expression reads either Gemini's or OpenAI's response shape, so both success paths share the same formatting and Markdown cleanup.
+- **One reply node for both models.** Its expression reads either OpenAI's or Gemini's response shape, so both paths share the same formatting and Markdown cleanup.
 
 ## Setup
 
-1. **Import** `youtube-summary-bot.workflow.json` into n8n.
-2. **Credentials**: create these and select them in the matching nodes (all set to `PLACEHOLDER` in the export):
+### 1. Qdrant (self-hosted, next to n8n in Docker)
+
+Find your n8n container's Docker network, then start Qdrant on it without exposing a port:
+
+```bash
+QKEY=$(openssl rand -hex 32)
+NET=$(docker inspect <n8n-container> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+docker run -d --name qdrant --restart unless-stopped \
+  --network "$NET" \
+  -p 127.0.0.1:6333:6333 \
+  -v qdrant_data:/qdrant/storage \
+  -e QDRANT__SERVICE__API_KEY=$QKEY \
+  qdrant/qdrant
+echo "Qdrant API key: $QKEY"
+```
+
+`-p 127.0.0.1:6333:6333` is only for the dashboard over an SSH tunnel (`ssh -L 6333:127.0.0.1:6333 user@server`, then open `http://localhost:6333/dashboard`). Leave it out if you don't need the dashboard. Don't use a plain `-p 6333:6333`, which would expose Qdrant to the internet.
+
+### 2. Bot workflow
+
+1. **Import** `youtube-summary-bot.workflow.json`.
+2. **Credentials** (all set to `PLACEHOLDER` in the export):
    - **Telegram API**: bot token from [@BotFather](https://t.me/BotFather). Used by the trigger and all reply nodes.
    - **Bearer Auth**: your TranscriptAPI key. Used by `Fetch Transcript`.
-   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by `Summarize With Gemini` and `Final Summary (Gemini)`.
-   - **OpenAI API**: used by `Fallback: Summarize With GPT` and `Final Summary (GPT)`.
-3. **Allowlist**: in `Allowed User?`, replace `123456789` with your Telegram chat ID. Easiest way to find it: activate the workflow, message the bot, and read `message.chat.id` from the Telegram Trigger output in the execution log.
-4. **Models**: pick a stable Flash model in the Gemini node (stable versions get overloaded less often than preview ones). The fallback uses `gpt-5.4-mini`.
-5. **Optional, recommended**: in workflow settings, set an Error Workflow to get notified when a run fails, and enable Timeout Workflow (5 minutes is plenty).
-6. Activate the workflow.
+   - **OpenAI API**: used by `Summarize With GPT` and `Final Summary (GPT)`.
+   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by the Gemini nodes and `Embeddings Google Gemini`.
+   - **Qdrant API**: URL `http://qdrant:6333` and your Qdrant key. Used by `Qdrant Vector Store`.
+   - **Header Auth**: name `api-key`, value your Qdrant key. Used by `Delete Old Points`.
+3. **Allowlist**: in `Allowed User?`, replace `123456789` with your Telegram chat ID (find it in the Telegram Trigger output of any execution).
+4. **Optional, recommended**: set an Error Workflow and a 5-minute Timeout in workflow settings.
+5. Activate, send a video, and check the Qdrant dashboard: the `youtube_transcripts` collection is created on the first insert.
+
+### 3. MCP workflow
+
+1. **Import** `youtube-memory-mcp.workflow.json`.
+2. **Credentials**:
+   - **MCP Server Trigger → Header Auth**: name `x-api-key`, value a long random token (`openssl rand -hex 32`).
+   - **Qdrant** and **Google Gemini**: the same as in the bot workflow. The embedding model **must** be the same one used when storing (`gemini-embedding-001`).
+3. Activate the workflow and copy the **Production URL** from the MCP Server Trigger.
+4. In Claude: **Settings → Connectors → Add custom connector**, paste the URL, choose no OAuth sign-in, and add a request header `x-api-key` with your token.
+5. In a new chat, enable the connector and ask about a saved video.
+
+Keep the MCP URL and token private. If either leaks, change the trigger's path or the token and update the connector.
 
 ## Customization
 
-- **Summary format or language**: edit the prompts in `Summarize With Gemini`, `Fallback: Summarize With GPT` and both `Final Summary` nodes. To always get, for example, Ukrainian, replace the language line with `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
-- **Transcript language priority**: the `language` query parameter in `Fetch Transcript` (default `uk,en,asr`). Codes are tried left to right, and `asr` means auto-generated captions in the original language. Change it to e.g. `de,en,asr` for German.
-- **Chunk size / max parts**: `CHUNK_SIZE` and `MAX_CHUNKS` at the top of the `Parse Transcript Text` code node.
-- **Skip the final summary**: delete the nodes after `Send Summary Reply`.
-- **Faster fallback**: lower Max Tries on `Summarize With Gemini` to switch to GPT sooner.
-- **Only one model**: delete the GPT node and connect Gemini's error output straight to `Summary Failed`. Or swap them, if you prefer paying for reliability.
+- **Summary language**: the prompts say "same language as the transcript". To always get one language, e.g. Ukrainian, use `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
+- **Transcript language priority**: the `language` query parameter in `Fetch Transcript` (default `uk,en,asr`). Codes are tried left to right; `asr` means auto-generated captions in the original language.
+- **Chunk size / overlap**: `TARGET` and `OVERLAP_SEGS` at the top of the `Build Chunks` code node. Keep chunks under the splitter size (2000).
+- **Search results**: `topK` in the MCP workflow's `search_youtube_memory` node (default 5).
+- **Summary parts**: `CHUNK_SIZE` and `MAX_CHUNKS` in `Parse Transcript Text`.
+- **Skip the memory branch**: delete `Delete Old Points` and everything after it. The bot then works as a summarizer only.
 - **More users**: change the `Allowed User?` condition to something like `{{ [111, 222].includes($json.message.chat.id) }}` (boolean "is true").
-- **More commands**: add a rule to the `Route Command` switch and wire a new branch.
 
 ## Free tier notes
 
-- Gemini's free tier has per-minute and per-day request limits. Check the current numbers in AI Studio.
+- Gemini's free tier has per-minute and per-day request limits, which also apply to embeddings. Check the current numbers in AI Studio.
 - Google may use free-tier prompts to improve its products. That's usually fine for public YouTube transcripts, but don't route private data through it. With billing enabled, your data isn't used that way.
