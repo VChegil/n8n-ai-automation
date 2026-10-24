@@ -3,7 +3,7 @@
     {
       "parameters": {
         "authentication": "headerAuth",
-        "path": "7458d87d-6668-4763-98c0-679efdd7b0e3"
+        "path": "UUID"
       },
       "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
       "typeVersion": 2,
@@ -13,7 +13,7 @@
       ],
       "id": "397749e3-5f41-4225-ad07-df4739005d11",
       "name": "MCP Server Trigger",
-      "webhookId": "7458d87d-6668-4763-98c0-679efdd7b0e3",
+      "webhookId": "UUID",
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER",
