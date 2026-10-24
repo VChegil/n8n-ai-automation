@@ -140,6 +140,8 @@ echo "Qdrant API key: $QKEY"
 
 Keep the MCP URL and token private. If either leaks, change the trigger's path or the token and update the connector.
 
+**Use two separate Header Auth credentials.** The Qdrant one (`api-key` + Qdrant key) is for `Delete Old Points`, the MCP one (`x-api-key` + MCP token) is for the MCP Server Trigger. If you reuse one credential for both, one side breaks. `Delete Old Points` fails quietly because its On Error is set to Continue, and duplicates start piling up without any visible error.
+
 ## Customization
 
 - **Summary language**: the prompts say "same language as the transcript". To always get one language, e.g. Ukrainian, use `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
