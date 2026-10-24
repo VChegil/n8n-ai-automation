@@ -2,7 +2,9 @@
 
 Send the bot `/yt <youtube link>` in Telegram and it replies with a summary of the video. Every video is also stored in a self-hosted vector database, so later you can ask Claude questions like *"what did that video say about handling provocation?"* and get an answer with links to the exact second in the video.
 
-<img src="images/telegram-example.png" alt="Example reply in Telegram" width="400">
+| Summary in Telegram | Asking Claude about saved videos |
+|---|---|
+| <img src="images/telegram-example.png" alt="Example reply in Telegram" width="380"> | <img src="images/claude-answer.png" alt="Claude answering from saved videos with timestamp links" width="520"> |
 
 ## Problem
 
@@ -45,15 +47,17 @@ Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigge
 
 The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when to call it, gets the 5 most relevant chunks, and answers with sources that jump to the right moment.
 
-**Part 1: from the Telegram message to the per-part summaries**
+![MCP workflow](images/mcp-workflow.png)
+
+**Bot workflow, part 1: from the Telegram message to the summaries and the memory branch**
 
 ![Workflow part 1](images/workflow-part1.png)
 
-**Part 2: the whole-video summary for multi-part videos**
+**Bot workflow, part 2: whole-video summary and storing chunks in Qdrant**
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*These screenshots show the summary part of the bot. The memory branch (Delete Old Points → Build Chunks → Qdrant) runs alongside it.*
+*A real run on a video stored as 24 chunks: Delete Old Points → Build Chunks → Qdrant runs alongside the summary branch.*
 
 ## Stack
 
