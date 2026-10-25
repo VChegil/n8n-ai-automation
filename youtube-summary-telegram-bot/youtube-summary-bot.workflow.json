@@ -495,8 +495,8 @@
       "type": "@n8n/n8n-nodes-langchain.googleGemini",
       "typeVersion": 1.1,
       "position": [
-        3504,
-        -32
+        3872,
+        112
       ],
       "id": "cb7c1c6c-807b-458b-af04-00fa46909b08",
       "name": "Final Summary (Gemini)",
@@ -531,8 +531,8 @@
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 2.1,
       "position": [
-        3872,
-        112
+        3504,
+        -32
       ],
       "id": "2c4693bc-71a5-4890-8b83-2c136af46d77",
       "name": "Final Summary (GPT)",
@@ -1095,7 +1095,7 @@
       "main": [
         [
           {
-            "node": "Final Summary (Gemini)",
+            "node": "Final Summary (GPT)",
             "type": "main",
             "index": 0
           }
@@ -1114,6 +1114,13 @@
         [
           {
             "node": "Send Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Summary (Gemini)",
             "type": "main",
             "index": 0
           }
@@ -1191,13 +1198,7 @@
             "index": 0
           }
         ],
-        [
-          {
-            "node": "Final Summary (GPT)",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Qdrant Chunks": {

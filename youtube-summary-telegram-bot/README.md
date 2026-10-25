@@ -35,7 +35,7 @@ Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigge
 4. Splits long transcripts into parts (40k chars each, max 5)
 5. Summarizes each part with **GPT**. If GPT fails, **Gemini** takes over automatically
 6. Sends each part back as `📄 Part 1/3`, `📄 Part 2/3`...
-7. For multi-part videos, combines the part summaries into one final `📌 Whole video summary` (Gemini first, GPT fallback)
+7. For multi-part videos, combines the part summaries into one final `📌 Whole video summary` (GPT first, Gemini fallback)
 
 ### Memory flow (RAG)
 
@@ -58,7 +58,7 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*A real run on a 2-hour podcast: 112 chunks in 3 batches, then one cleanup. Gemini's daily limit was used up, so the whole-video summary fell back to GPT.*
+*A real run on a 2-hour podcast: 112 chunks in 3 batches, then one cleanup. The whole-video summary was still Gemini-first in this run and fell back to GPT after hitting Gemini's daily limit, which is why the order is now GPT first.*
 
 ## Stack
 
@@ -97,7 +97,7 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 - **Batches with a pause for embeddings.** Gemini's free tier allows about 30K embedding tokens per minute. A two-hour podcast is ~110 chunks, over that limit in one call. When the call fails, the embeddings node returns empty vectors and Qdrant rejects the insert with `dense vector must not be empty`. Loop Over Items (40) + Wait (60s) keeps each minute under the limit. The cleanup runs from the loop's `done` output, only after every batch is in.
 - **Qdrant not exposed to the internet.** It runs on the same Docker network as n8n, with no public port. The dashboard is reached through an SSH tunnel.
 - **MCP protected with a header token.** Claude's custom connectors can send fixed request headers, so the MCP Server Trigger uses Header Auth (`x-api-key`) instead of relying on a secret URL alone.
-- **GPT first for summaries, Gemini as fallback.** In testing, Gemini sometimes took minutes on short videos when overloaded. GPT is fast and cheap; Gemini only runs when GPT fails. The whole-video summary works on short inputs, so it tries Gemini first.
+- **GPT first for summaries, Gemini as fallback.** In testing, Gemini sometimes took minutes on short videos when overloaded, and the free tier allows only about 20 Flash requests a day. GPT is fast and cheap; Gemini only runs when GPT fails. The same order is used for the whole-video summary.
 - **Map-reduce for long videos.** Each part is summarized on its own, then the part summaries are combined in one final pass. Suggested by several people in the Reddit thread about v1.
 - **Allowlist right after the trigger.** Bot usernames are public. Without it, anyone who finds the bot can spend your API credits.
 - **One reply node for both models.** Its expression reads either OpenAI's or Gemini's response shape, so both paths share the same formatting and Markdown cleanup.
