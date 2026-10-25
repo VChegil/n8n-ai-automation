@@ -39,9 +39,9 @@ Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigge
 
 ### Memory flow (RAG)
 
-1. **Delete old points** for this `video_id`, so sending a video again refreshes it instead of duplicating it
-2. **Build chunks** from the timestamped transcript lines: ~900 characters (about a minute of speech), 2 lines of overlap, and a header with the video title and channel
-3. **Embed** each chunk with `gemini-embedding-001` and store it in Qdrant with metadata: `video_id`, `title`, `channel`, `url` (with `?t=` timestamp), `start`, `chunk`, `language`
+1. **Build chunks** from the timestamped transcript lines: ~900 characters (about a minute of speech), 2 lines of overlap, and a header with the video title and channel
+2. **Embed** each chunk with `gemini-embedding-001` and store it in Qdrant with metadata: `video_id`, `title`, `channel`, `url` (with `?t=` timestamp), `start`, `chunk`, `language`, `run_id`
+3. **Delete old points** for this `video_id` whose `run_id` differs from the current execution, so sending a video again refreshes it instead of duplicating it
 
 ### Ask flow (MCP)
 
@@ -57,7 +57,7 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*A real run on a video stored as 24 chunks: Delete Old Points → Build Chunks → Qdrant runs alongside the summary branch.*
+*A real run on a video stored as 24 chunks. The memory branch runs alongside the summary branch. The screenshot shows an earlier order with Delete Old Points first; the current workflow runs Build Chunks → Qdrant → Delete Old Points.*
 
 ## Stack
 
@@ -83,14 +83,14 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 | Very long video (3h+ podcast) | First 5 parts summarized, warning on the last message; the full transcript is still stored |
 | Multi-part video | Part messages, then one summary of the whole video |
 | Same video sent twice | Old chunks deleted first, so no duplicates in search results |
-| First video ever (collection doesn't exist yet) | Delete step fails quietly, collection is created on insert |
+| Insert fails on a re-run | Old copy of the video stays, nothing is lost |
 | MCP URL leaks | Useless without the `x-api-key` token |
 
 ## Design decisions
 
 - **Time-based chunks with a context header.** Chunks follow the transcript's own lines and keep their start time, so every search result can link to `youtu.be/ID?t=123`. The header (`Video: <title> (<channel>)`) makes each chunk self-describing, which improves retrieval and lets Claude cite the source.
 - **Chunk in one place only.** Build Chunks does the chunking, and the Data Loader's splitter is set to 2000 characters so it never cuts again. With the default 1000-character splitter, chunks slightly over the limit were split right after the header line, producing title-only points that matched every query. Claude got 5 titles and no content.
-- **Delete-then-insert per video.** A filter delete on `metadata.video_id` before inserting keeps the collection free of duplicates without tracking state anywhere else.
+- **Insert first, then delete the old copy.** Each run tags its chunks with `run_id` (the n8n execution ID). After a successful insert, a filter delete removes points with this `video_id` and a different `run_id`. If embedding or insert fails halfway (e.g. a Gemini rate limit), the delete never runs and the previous complete copy stays. An earlier delete-then-insert version could lose a video on a failed re-run. Suggested in the Reddit thread.
 - **Qdrant not exposed to the internet.** It runs on the same Docker network as n8n, with no public port. The dashboard is reached through an SSH tunnel.
 - **MCP protected with a header token.** Claude's custom connectors can send fixed request headers, so the MCP Server Trigger uses Header Auth (`x-api-key`) instead of relying on a secret URL alone.
 - **GPT first for summaries, Gemini as fallback.** In testing, Gemini sometimes took minutes on short videos when overloaded. GPT is fast and cheap; Gemini only runs when GPT fails. The whole-video summary works on short inputs, so it tries Gemini first.
@@ -153,7 +153,7 @@ Keep the MCP URL and token private. If either leaks, change the trigger's path o
 - **Chunk size / overlap**: `TARGET` and `OVERLAP_SEGS` at the top of the `Build Chunks` code node. Keep chunks under the splitter size (2000).
 - **Search results**: `topK` in the MCP workflow's `search_youtube_memory` node (default 5).
 - **Summary parts**: `CHUNK_SIZE` and `MAX_CHUNKS` in `Parse Transcript Text`.
-- **Skip the memory branch**: delete `Delete Old Points` and everything after it. The bot then works as a summarizer only.
+- **Skip the memory branch**: delete `Build Chunks`, `Qdrant Vector Store` (with its sub-nodes) and `Delete Old Points`. The bot then works as a summarizer only.
 - **More users**: change the `Allowed User?` condition to something like `{{ [111, 222].includes($json.message.chat.id) }}` (boolean "is true").
 
 ## Free tier notes

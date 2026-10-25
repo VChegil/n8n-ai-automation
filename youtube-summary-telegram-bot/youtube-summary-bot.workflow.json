@@ -649,6 +649,10 @@
               {
                 "name": "language",
                 "value": "={{ $json.language }}"
+              },
+              {
+                "name": "run_id",
+                "value": "={{ $json.run_id }}"
               }
             ]
           }
@@ -665,7 +669,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $('Fetch Transcript').first().json;\nconst segs = data.transcript || data[0]?.transcript || [];\nconst meta = data.metadata || {};\nconst videoId = $('Extract YouTube Video ID').first().json.videoId;\n\nconst TARGET = 900;     // characters per chunk\nconst OVERLAP_SEGS = 2; // transcript lines repeated in the next chunk\n\nconst chunks = [];\nlet cur = [], len = 0;\nfor (let i = 0; i < segs.length; i++) {\n  cur.push(segs[i]);\n  len += segs[i].text.length + 1;\n  if (len >= TARGET || i === segs.length - 1) {\n    chunks.push(cur);\n    cur = cur.slice(-OVERLAP_SEGS);\n    len = cur.reduce((a, s) => a + s.text.length + 1, 0);\n  }\n}\n\nreturn chunks.map((c, i) => {\n  const start = Math.floor(c[0].start);\n  const text = c.map(s => s.text).join(' ').replace(/\\s+/g, ' ').trim();\n  return { json: {\n    text: `Video: ${meta.title || ''} (${meta.author_name || ''})\\n${text}`,\n    video_id: videoId,\n    title: meta.title || '',\n    channel: meta.author_name || '',\n    start,\n    url: `https://youtu.be/${videoId}?t=${start}`,\n    chunk: i + 1,\n    language: data.language || ''\n  }};\n});"
+        "jsCode": "const data = $('Fetch Transcript').first().json;\nconst segs = data.transcript || data[0]?.transcript || [];\nconst meta = data.metadata || {};\nconst videoId = $('Extract YouTube Video ID').first().json.videoId;\n\nconst TARGET = 900;     // characters per chunk\nconst OVERLAP_SEGS = 2; // transcript lines repeated in the next chunk\n\nconst chunks = [];\nlet cur = [], len = 0;\nfor (let i = 0; i < segs.length; i++) {\n  cur.push(segs[i]);\n  len += segs[i].text.length + 1;\n  if (len >= TARGET || i === segs.length - 1) {\n    chunks.push(cur);\n    cur = cur.slice(-OVERLAP_SEGS);\n    len = cur.reduce((a, s) => a + s.text.length + 1, 0);\n  }\n}\n\nreturn chunks.map((c, i) => {\n  const start = Math.floor(c[0].start);\n  const text = c.map(s => s.text).join(' ').replace(/\\s+/g, ' ').trim();\n  return { json: {\n    text: `Video: ${meta.title || ''} (${meta.author_name || ''})\\n${text}`,\n    video_id: videoId,\n    title: meta.title || '',\n    channel: meta.author_name || '',\n    start,\n    url: `https://youtu.be/${videoId}?t=${start}`,\n    chunk: i + 1,\n    language: data.language || '',\n    run_id: String($execution.id)\n  }};\n});"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -700,7 +704,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"metadata.video_id\",\n        \"match\": { \"value\": \"{{ $('Extract YouTube Video ID').first().json.videoId }}\" }\n      }\n    ]\n  }\n}",
+        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      { \"key\": \"metadata.video_id\", \"match\": { \"value\": \"{{ $('Extract YouTube Video ID').first().json.videoId }}\" } }\n    ],\n    \"must_not\": [\n      { \"key\": \"metadata.run_id\", \"match\": { \"value\": \"{{ String($execution.id) }}\" } }\n    ]\n  }\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -877,7 +881,7 @@
             "index": 0
           },
           {
-            "node": "Delete Old Points",
+            "node": "Build Chunks",
             "type": "main",
             "index": 0
           }
@@ -992,13 +996,7 @@
     },
     "Delete Old Points": {
       "main": [
-        [
-          {
-            "node": "Build Chunks",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Fallback: Summarize With Gemini": {
@@ -1031,6 +1029,17 @@
         [
           {
             "node": "Final Summary (GPT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Delete Old Points",
             "type": "main",
             "index": 0
           }
