@@ -20,11 +20,11 @@ Two n8n workflows:
 | `youtube-memory-mcp.workflow.json` | MCP server: lets Claude (or any MCP client) search the stored transcripts |
 
 ```
-Telegram /yt ──► Transcript ──┬──► GPT summary (Gemini fallback) ──► Telegram
-                              │
-                              └──► Time-based chunks ──► Gemini embeddings ──► Qdrant (self-hosted)
-                                                                                  ▲
-Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigger ──► search ──┘
+Telegram /yt ──► Transcript ──┬──► GPT summary (Gemini fallback) ──► Telegram ──► summary point ──┐
+                              │                                                                  ▼
+                              └──► Time-based chunks ──► batches of 40 ──► Gemini embeddings ──► Qdrant (self-hosted)
+                                                                                                 ▲
+Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigger ──► search ────────────────┘
 ```
 
 ### Summary flow
@@ -40,8 +40,9 @@ Claude ──► MCP connector (token-protected) ──► n8n MCP Server Trigge
 ### Memory flow (RAG)
 
 1. **Build chunks** from the timestamped transcript lines: ~900 characters (about a minute of speech), 2 lines of overlap, and a header with the video title and channel
-2. **Embed** each chunk with `gemini-embedding-001` and store it in Qdrant with metadata: `video_id`, `title`, `channel`, `url` (with `?t=` timestamp), `start`, `chunk`, `language`, `run_id`
-3. **Delete old points** for this `video_id` whose `run_id` differs from the current execution, so sending a video again refreshes it instead of duplicating it
+2. **Embed** the chunks with `gemini-embedding-001` in batches of 40, with a 60-second pause between batches, and store them in Qdrant with metadata: `video_id`, `title`, `channel`, `url` (with `?t=` timestamp), `start`, `chunk`, `language`, `run_id`, `type: chunk`
+3. **Store the summary** the bot sent to Telegram as one extra point per video (`type: summary`), so questions like "what was that video about?" match the summary instead of a random minute of the transcript
+4. **Delete old points** for this `video_id` whose `run_id` differs from the current execution, so sending a video again refreshes it instead of duplicating it
 
 ### Ask flow (MCP)
 
@@ -57,7 +58,7 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*A real run on a video stored as 24 chunks. The memory branch runs alongside the summary branch. The screenshot shows an earlier order with Delete Old Points first; the current workflow runs Build Chunks → Qdrant → Delete Old Points.*
+*A real run on a video stored as 24 chunks. The screenshot shows an earlier version; the current workflow runs Build Chunks → Loop Over Items (40) → Qdrant Chunks → Wait → … → Delete Old Points, and stores the summary through a separate Qdrant Summary node.*
 
 ## Stack
 
@@ -84,6 +85,7 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 | Multi-part video | Part messages, then one summary of the whole video |
 | Same video sent twice | Old chunks deleted first, so no duplicates in search results |
 | Insert fails on a re-run | Old copy of the video stays, nothing is lost |
+| Long video, 100+ chunks | Embedded in batches of 40 with a pause, so it stays under Gemini's tokens-per-minute limit |
 | MCP URL leaks | Useless without the `x-api-key` token |
 
 ## Design decisions
@@ -91,6 +93,8 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 - **Time-based chunks with a context header.** Chunks follow the transcript's own lines and keep their start time, so every search result can link to `youtu.be/ID?t=123`. The header (`Video: <title> (<channel>)`) makes each chunk self-describing, which improves retrieval and lets Claude cite the source.
 - **Chunk in one place only.** Build Chunks does the chunking, and the Data Loader's splitter is set to 2000 characters so it never cuts again. With the default 1000-character splitter, chunks slightly over the limit were split right after the header line, producing title-only points that matched every query. Claude got 5 titles and no content.
 - **Insert first, then delete the old copy.** Each run tags its chunks with `run_id` (the n8n execution ID). After a successful insert, a filter delete removes points with this `video_id` and a different `run_id`. If embedding or insert fails halfway (e.g. a Gemini rate limit), the delete never runs and the previous complete copy stays. An earlier delete-then-insert version could lose a video on a failed re-run. Suggested in the Reddit thread.
+- **A summary point next to the chunks.** Small chunks are good for "what did they say about X", bad for "what was this video about". The summary the bot already wrote is stored as one more point (`type: summary`, `chunk: 0`), so overview questions find it first. It goes through its own Qdrant insert node so it never enters the chunk loop. It has the same `run_id`, so the cleanup step keeps it. Suggested in the Reddit thread.
+- **Batches with a pause for embeddings.** Gemini's free tier allows about 30K embedding tokens per minute. A two-hour podcast is ~110 chunks, over that limit in one call. When the call fails, the embeddings node returns empty vectors and Qdrant rejects the insert with `dense vector must not be empty`. Loop Over Items (40) + Wait (60s) keeps each minute under the limit. The cleanup runs from the loop's `done` output, only after every batch is in.
 - **Qdrant not exposed to the internet.** It runs on the same Docker network as n8n, with no public port. The dashboard is reached through an SSH tunnel.
 - **MCP protected with a header token.** Claude's custom connectors can send fixed request headers, so the MCP Server Trigger uses Header Auth (`x-api-key`) instead of relying on a secret URL alone.
 - **GPT first for summaries, Gemini as fallback.** In testing, Gemini sometimes took minutes on short videos when overloaded. GPT is fast and cheap; Gemini only runs when GPT fails. The whole-video summary works on short inputs, so it tries Gemini first.
@@ -125,8 +129,8 @@ echo "Qdrant API key: $QKEY"
    - **Telegram API**: bot token from [@BotFather](https://t.me/BotFather). Used by the trigger and all reply nodes.
    - **Bearer Auth**: your TranscriptAPI key. Used by `Fetch Transcript`.
    - **OpenAI API**: used by `Summarize With GPT` and `Final Summary (GPT)`.
-   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by the Gemini nodes and `Embeddings Google Gemini`.
-   - **Qdrant API**: URL `http://qdrant:6333` and your Qdrant key. Used by `Qdrant Vector Store`.
+   - **Google Gemini (PaLM) API**: key from [Google AI Studio](https://aistudio.google.com). Used by the Gemini nodes and both embeddings nodes.
+   - **Qdrant API**: URL `http://qdrant:6333` and your Qdrant key. Used by `Qdrant Chunks` and `Qdrant Summary`.
    - **Header Auth**: name `api-key`, value your Qdrant key. Used by `Delete Old Points`.
 3. **Allowlist**: in `Allowed User?`, replace `123456789` with your Telegram chat ID (find it in the Telegram Trigger output of any execution).
 4. **Optional, recommended**: set an Error Workflow and a 5-minute Timeout in workflow settings.
@@ -151,12 +155,13 @@ Keep the MCP URL and token private. If either leaks, change the trigger's path o
 - **Summary language**: the prompts say "same language as the transcript". To always get one language, e.g. Ukrainian, use `Always write your entire reply in Ukrainian, even if the transcript is in another language.`
 - **Transcript language priority**: the `language` query parameter in `Fetch Transcript` (default `uk,en,asr`). Codes are tried left to right; `asr` means auto-generated captions in the original language.
 - **Chunk size / overlap**: `TARGET` and `OVERLAP_SEGS` at the top of the `Build Chunks` code node. Keep chunks under the splitter size (2000).
+- **Embedding batches**: `Batch Size` in `Loop Over Items` (40) and the pause in `Wait` (60s). With paid Gemini, raise the batch size or remove the Wait.
 - **Search results**: `topK` in the MCP workflow's `search_youtube_memory` node (default 5).
 - **Summary parts**: `CHUNK_SIZE` and `MAX_CHUNKS` in `Parse Transcript Text`.
-- **Skip the memory branch**: delete `Build Chunks`, `Qdrant Vector Store` (with its sub-nodes) and `Delete Old Points`. The bot then works as a summarizer only.
+- **Skip the memory branch**: delete `Build Chunks`, `Loop Over Items`, `Qdrant Chunks` (with its sub-nodes), `Wait`, `Delete Old Points`, `Build Summary Record` and `Qdrant Summary` (with its sub-nodes). The bot then works as a summarizer only.
 - **More users**: change the `Allowed User?` condition to something like `{{ [111, 222].includes($json.message.chat.id) }}` (boolean "is true").
 
 ## Free tier notes
 
-- Gemini's free tier has per-minute and per-day request limits, which also apply to embeddings. Check the current numbers in AI Studio.
+- Gemini's free tier has per-minute and per-day limits, which also apply to embeddings. Check the current numbers in AI Studio (Usage). The one that bites first for long videos is embedding tokens per minute; the batch loop handles it.
 - Google may use free-tier prompts to improve its products. That's usually fine for public YouTube transcripts, but don't route private data through it. With billing enabled, your data isn't used that way.

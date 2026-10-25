@@ -369,7 +369,7 @@
         "responses": {
           "values": [
             {
-              "content": "=This is part {{ $('Parse Transcript Text').item.json.part }} of {{ $('Parse Transcript Text').item.json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $('Parse Transcript Text').item.json.transcript_only_text }}"
+              "content": "={{ $('Parse Transcript Text').item.json.total > 1 ? 'This is part ' + $('Parse Transcript Text').item.json.part + ' of ' + $('Parse Transcript Text').item.json.total + ' of a YouTube video transcript.\\nSummarize only this part.' : 'This is a YouTube video transcript. Summarize the whole video.' }}\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $('Parse Transcript Text').item.json.transcript_only_text }}"
             }
           ]
         },
@@ -587,7 +587,7 @@
         584
       ],
       "id": "9d661f45-966d-42e5-9d5b-8049d0cdca57",
-      "name": "Qdrant Vector Store",
+      "name": "Qdrant Chunks",
       "credentials": {
         "qdrantApi": {
           "id": "PLACEHOLDER",
@@ -653,6 +653,10 @@
               {
                 "name": "run_id",
                 "value": "={{ $json.run_id }}"
+              },
+              {
+                "name": "type",
+                "value": "={{ $json.type }}"
               }
             ]
           }
@@ -669,12 +673,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $('Fetch Transcript').first().json;\nconst segs = data.transcript || data[0]?.transcript || [];\nconst meta = data.metadata || {};\nconst videoId = $('Extract YouTube Video ID').first().json.videoId;\n\nconst TARGET = 900;     // characters per chunk\nconst OVERLAP_SEGS = 2; // transcript lines repeated in the next chunk\n\nconst chunks = [];\nlet cur = [], len = 0;\nfor (let i = 0; i < segs.length; i++) {\n  cur.push(segs[i]);\n  len += segs[i].text.length + 1;\n  if (len >= TARGET || i === segs.length - 1) {\n    chunks.push(cur);\n    cur = cur.slice(-OVERLAP_SEGS);\n    len = cur.reduce((a, s) => a + s.text.length + 1, 0);\n  }\n}\n\nreturn chunks.map((c, i) => {\n  const start = Math.floor(c[0].start);\n  const text = c.map(s => s.text).join(' ').replace(/\\s+/g, ' ').trim();\n  return { json: {\n    text: `Video: ${meta.title || ''} (${meta.author_name || ''})\\n${text}`,\n    video_id: videoId,\n    title: meta.title || '',\n    channel: meta.author_name || '',\n    start,\n    url: `https://youtu.be/${videoId}?t=${start}`,\n    chunk: i + 1,\n    language: data.language || '',\n    run_id: String($execution.id)\n  }};\n});"
+        "jsCode": "const data = $('Fetch Transcript').first().json;\nconst segs = data.transcript || data[0]?.transcript || [];\nconst meta = data.metadata || {};\nconst videoId = $('Extract YouTube Video ID').first().json.videoId;\n\nconst TARGET = 900;     // characters per chunk\nconst OVERLAP_SEGS = 2; // transcript lines repeated in the next chunk\n\nconst chunks = [];\nlet cur = [], len = 0;\nfor (let i = 0; i < segs.length; i++) {\n  cur.push(segs[i]);\n  len += segs[i].text.length + 1;\n  if (len >= TARGET || i === segs.length - 1) {\n    chunks.push(cur);\n    cur = cur.slice(-OVERLAP_SEGS);\n    len = cur.reduce((a, s) => a + s.text.length + 1, 0);\n  }\n}\n\nreturn chunks.map((c, i) => {\n  const start = Math.floor(c[0].start);\n  const text = c.map(s => s.text).join(' ').replace(/\\s+/g, ' ').trim();\n  return { json: {\n    text: `Video: ${meta.title || ''} (${meta.author_name || ''})\\n${text}`,\n    video_id: videoId,\n    title: meta.title || '',\n    channel: meta.author_name || '',\n    start,\n    url: `https://youtu.be/${videoId}?t=${start}`,\n    chunk: i + 1,\n    language: data.language || '',\n    run_id: String($execution.id),\n    type: 'chunk'\n  }};\n});"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2272,
+        1920,
         584
       ],
       "id": "e7abe3ad-e19c-4148-8cd3-aa568534f8a3",
@@ -710,8 +714,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1920,
-        584
+        2704,
+        300
       ],
       "id": "063e50ad-4282-4a2c-a9a0-cd15c3419f66",
       "name": "Delete Old Points",
@@ -735,7 +739,7 @@
         "messages": {
           "values": [
             {
-              "content": "=This is part {{ $('Parse Transcript Text').item.json.part }} of {{ $('Parse Transcript Text').item.json.total }} of a YouTube video transcript.\nSummarize only this part.\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $('Parse Transcript Text').item.json.transcript_only_text }}"
+              "content": "={{ $('Parse Transcript Text').item.json.total > 1 ? 'This is part ' + $('Parse Transcript Text').item.json.part + ' of ' + $('Parse Transcript Text').item.json.total + ' of a YouTube video transcript.\\nSummarize only this part.' : 'This is a YouTube video transcript. Summarize the whole video.' }}\n\nWrite your entire reply in the same language as the transcript.\n\nReply in exactly this format, plain text, no markdown, no intro sentence, no extra headings:\n\nSummary:\n<2-3 sentences>\n\nKey points:\n• <point>\n• <point>\n(3-8 points depending on how much content there is, no filler)\n\nTranscript:\n{{ $('Parse Transcript Text').item.json.transcript_only_text }}"
             }
           ]
         },
@@ -760,6 +764,165 @@
         }
       },
       "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "batchSize": 40,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2272,
+        584
+      ],
+      "id": "91fe3f46-5415-4ada-9e34-e636bc0f2ad8",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3056,
+        760
+      ],
+      "id": "00a18787-87ff-436d-81bf-6234b0c9a1c3",
+      "name": "Wait",
+      "webhookId": "5cea2c91-2cf2-4205-b35e-921a6b735f28",
+      "notes": "Pause between batches so embeddings stay under Gemini's free-tier tokens-per-minute limit",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\n// long video: text from Send Final Summary; short video: the single part from Aggregate Parts\nlet summary = j.result?.text ?? (j.parts || []).join('\\n\\n');\nsummary = summary.replace(/^📌.*\\n+/, '').trim();\n\nconst data = $('Fetch Transcript').first().json;\nconst meta = data.metadata || {};\nconst videoId = $('Extract YouTube Video ID').first().json.videoId;\n\nreturn [{ json: {\n  text: `Video summary: ${meta.title || ''} (${meta.author_name || ''})\\n${summary}`,\n  video_id: videoId,\n  title: meta.title || '',\n  channel: meta.author_name || '',\n  start: 0,\n  url: `https://youtu.be/${videoId}`,\n  chunk: 0,\n  language: data.language || '',\n  run_id: String($execution.id),\n  type: 'summary'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4432,
+        -320
+      ],
+      "id": "0217ef33-1bd6-4528-9a13-d4705b21b168",
+      "name": "Build Summary Record"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "youtube_transcripts",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        4688,
+        -544
+      ],
+      "id": "42f427bf-70aa-480a-92a5-a5767bb3f4d3",
+      "name": "Qdrant Summary",
+      "credentials": {
+        "qdrantApi": {
+          "id": "PLACEHOLDER",
+          "name": "Qdrant"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        4656,
+        -320
+      ],
+      "id": "d32976fa-4da9-40f6-938f-018f49422703",
+      "name": "Embeddings Google Gemini (Summary)",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PLACEHOLDER",
+          "name": "Google Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "video_id",
+                "value": "={{ $json.video_id }}"
+              },
+              {
+                "name": "title",
+                "value": "={{ $json.title }}"
+              },
+              {
+                "name": "channel",
+                "value": "={{ $json.channel }}"
+              },
+              {
+                "name": "url",
+                "value": "={{ $json.url }}"
+              },
+              {
+                "name": "start",
+                "value": "={{ $json.start }}"
+              },
+              {
+                "name": "chunk",
+                "value": "={{ $json.chunk }}"
+              },
+              {
+                "name": "language",
+                "value": "={{ $json.language }}"
+              },
+              {
+                "name": "run_id",
+                "value": "={{ $json.run_id }}"
+              },
+              {
+                "name": "type",
+                "value": "={{ $json.type }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        4784,
+        -320
+      ],
+      "id": "21242e95-ab7f-4737-9d3b-d7c5172058da",
+      "name": "Default Data Loader (Summary)"
+    },
+    {
+      "parameters": {
+        "chunkSize": 2000,
+        "options": {},
+        "chunkOverlap": 0
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        4864,
+        -112
+      ],
+      "id": "f3382b36-70f6-4ff4-b78f-6aaf5d30cb2a",
+      "name": "Recursive Character Text Splitter (Summary)"
     }
   ],
   "connections": {
@@ -936,6 +1099,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Build Summary Record",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -954,7 +1124,7 @@
       "ai_embedding": [
         [
           {
-            "node": "Qdrant Vector Store",
+            "node": "Qdrant Chunks",
             "type": "ai_embedding",
             "index": 0
           }
@@ -965,7 +1135,7 @@
       "ai_document": [
         [
           {
-            "node": "Qdrant Vector Store",
+            "node": "Qdrant Chunks",
             "type": "ai_document",
             "index": 0
           }
@@ -976,7 +1146,7 @@
       "main": [
         [
           {
-            "node": "Qdrant Vector Store",
+            "node": "Loop Over Items",
             "type": "main",
             "index": 0
           }
@@ -992,11 +1162,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "Delete Old Points": {
-      "main": [
-        []
       ]
     },
     "Fallback: Summarize With Gemini": {
@@ -1035,12 +1200,96 @@
         ]
       ]
     },
-    "Qdrant Vector Store": {
+    "Qdrant Chunks": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
       "main": [
         [
           {
             "node": "Delete Old Points",
             "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Qdrant Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Final Summary": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary Record": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini (Summary)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Summary",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader (Summary)": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Summary",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter (Summary)": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader (Summary)",
+            "type": "ai_textSplitter",
             "index": 0
           }
         ]
