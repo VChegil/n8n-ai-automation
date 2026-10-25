@@ -50,15 +50,15 @@ The MCP workflow exposes one tool, `search_youtube_memory`. Claude decides when 
 
 ![MCP workflow](images/mcp-workflow.png)
 
-**Bot workflow, part 1: from the Telegram message to the summaries and the memory branch**
+**Bot workflow, part 1: from the Telegram message to the part summaries, plus the memory branch (chunks embedded in batches of 40, then old points deleted)**
 
 ![Workflow part 1](images/workflow-part1.png)
 
-**Bot workflow, part 2: whole-video summary and storing chunks in Qdrant**
+**Bot workflow, part 2: whole-video summary and the summary point in Qdrant**
 
 ![Workflow part 2](images/workflow-part2.png)
 
-*A real run on a video stored as 24 chunks. The screenshot shows an earlier version; the current workflow runs Build Chunks → Loop Over Items (40) → Qdrant Chunks → Wait → … → Delete Old Points, and stores the summary through a separate Qdrant Summary node.*
+*A real run on a 2-hour podcast: 112 chunks in 3 batches, then one cleanup. Gemini's daily limit was used up, so the whole-video summary fell back to GPT.*
 
 ## Stack
 
