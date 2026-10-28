@@ -1,0 +1,57 @@
+{
+  "name": "Error Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "3b11f5a2-0856-41f0-95f2-bb9f86c5ca72",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ <b>Workflow Error</b>\n\n<b>Workflow:</b> {{ $json.workflow.name }}\n<b>Node:</b> {{ $json.execution.lastNodeExecuted }}\n<b>Time:</b> {{ $now.setZone('Europe/Prague').format('yyyy-MM-dd HH:mm:ss') }}\n\n<b>Message:</b>\n{{ String($json.execution.error.message || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }}\n\n<b>Url:</b>\n{{ $json.execution.url }}\n\n<pre>{{ String($json.execution.error.stack || '').substring(0, 500).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }}</pre>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "066ba000-df70-4845-bb86-1187b6740402",
+      "name": "Notify Error",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

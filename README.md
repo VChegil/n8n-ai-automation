@@ -14,6 +14,7 @@ Each workflow demonstrates a different automation pattern — webhook triggers, 
 | [📋 Daily Summary](./clickup-ai-daily-summary) | Fetches active ClickUp tasks and generates a structured daily report (Google Doc + email) | ClickUp · Claude · Google Docs · Gmail |
 | [✍️ Content Brief Generator](./clickup-content-brief) | Auto-generates a content brief when a tag is added to a ClickUp task | ClickUp Webhook · Claude · Google Docs |
 | [▶️ YouTube Summary Bot + Video Memory](./youtube-summary-telegram-bot) | Telegram bot that summarizes YouTube videos and stores them in a self-hosted vector DB, searchable from Claude via MCP with timestamped sources | Telegram · TranscriptAPI · OpenAI · Gemini · Qdrant · MCP |
+| [🎯 AI Lead Qualifier](./ai-lead-qualifier) | Scores inbound form leads with Claude, researches the company (website or Tavily web search), upserts to HubSpot, alerts hot leads in Telegram and drafts a personal Gmail reply | Tally · Claude · Tavily · HubSpot · Telegram · Gmail |
 
 *More workflows coming — focused on agency, content, and SaaS automation use cases.*
 
