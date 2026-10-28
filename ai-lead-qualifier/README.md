@@ -4,21 +4,7 @@ An n8n workflow that qualifies inbound leads automatically. A prospect fills in 
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Tally form] --> B[Normalize Lead]
-    B --> C{Has Consent?}
-    C -- yes --> D[Fetch Website]
-    D --> E[Extract Site Text]
-    E --> F{Site OK?}
-    F -- yes --> H[AI Scoring<br/>Claude + structured output]
-    F -- no --> G[Tavily Search] --> G2[Merge Tavily] --> H
-    H --> I[Merge Score<br/>tier rules]
-    I --> J[HubSpot upsert]
-    J --> K{Route by Tier}
-    K -- hot --> L[Telegram alert]
-    K -- hot / warm / cold --> M[Gmail draft]
-```
+![AI Lead Qualifier workflow](./images/workflow.png)
 
 1. **Tally Trigger** receives the form submission.
 2. **Normalize Lead** maps fields by question label (not by ID, so editing the form doesn't break it), lowercases the email, derives the company domain (skipping free mail providers) and checks GDPR consent.
