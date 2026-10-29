@@ -41,7 +41,7 @@ General requirements:
 
 ## About
 
-Built by a backend developer (PHP / Java) focused on n8n + AI automation. Open to consulting work on similar projects — reach out via [GitHub](https://github.com/VChegil).
+Built by a backend developer (PHP / Java) focused on n8n + AI automation. Open to consulting work on similar projects — reach out at [miveclor@gmail.com](mailto:miveclor@gmail.com).
 
 ## License
 
