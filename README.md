@@ -45,4 +45,4 @@ Built by a backend developer (PHP / Java) focused on n8n + AI automation. Open t
 
 ## License
 
-MIT — fork, modify, and use freely.
+MIT — fork, modify, and use freely. See [LICENSE](./LICENSE).
