@@ -2,6 +2,12 @@
 
 An n8n workflow that qualifies inbound leads automatically. A prospect fills in a Tally form; the workflow researches the company, scores the lead with Claude, saves it to HubSpot, pings Telegram for hot leads and drafts a personal reply in Gmail.
 
+## Demo
+
+[![Watch the demo (75 s)](./images/demo-thumbnail.png)](./media/demo.mp4)
+
+*75-second demo: a lead fills in the form, gets scored, lands in HubSpot, triggers a Telegram alert and a Gmail draft. Click to open the video.*
+
 ## How it works
 
 ![AI Lead Qualifier workflow](./images/workflow.png)
@@ -13,7 +19,7 @@ An n8n workflow that qualifies inbound leads automatically. A prospect fills in 
 5. **Site OK?** if the site blocked the request or returned almost nothing, **Tavily Search** looks the company up on the web instead.
 6. **AI Scoring** (Claude Haiku via Basic LLM Chain + Structured Output Parser) returns a score, positive reasons, red flags, a company summary and a personal email draft.
 7. **Merge Score** computes the tier in code, not by the LLM:
-   - `hot` ≥ 70, `warm` ≥ 40, otherwise `cold`
+   - `hot` ≥ 65, `warm` ≥ 40, otherwise `cold`
    - a lead without a concrete task (`clarity_score` < 15) can never be `hot`
 8. **HubSpot** upserts the contact by email (no duplicates) with custom lead properties.
 9. **Route by Tier**: hot leads go to Telegram; every lead gets a Gmail **draft** to review before sending.

@@ -122,7 +122,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const lead = $('Extract Site Text').item.json;\nconst ai = $json.output;\n\nconst score = Math.max(0, Math.min(100, Number(ai.score) || 0));\nconst clarity = Number(ai.clarity_score) || 0;\nlet tier = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';\nif (tier === 'hot' && clarity < 15) tier = 'warm'; // no concrete task -> not hot\n\nconst { site_text, ...leadClean } = lead; // raw site text is not needed in CRM\n\nreturn {\n  ...leadClean,\n  score,\n  tier,\n  reasons: ai.reasons,\n  red_flags: ai.red_flags,\n  company_summary: ai.company_summary,\n  email_subject: ai.email_subject,\n  email_body: ai.email_body,\n};"
+        "jsCode": "const lead = $('Extract Site Text').item.json;\nconst ai = $json.output;\n\nconst score = Math.max(0, Math.min(100, Number(ai.score) || 0));\nconst clarity = Number(ai.clarity_score) || 0;\nlet tier = score >= 65 ? 'hot' : score >= 40 ? 'warm' : 'cold';\nif (tier === 'hot' && clarity < 15) tier = 'warm'; // no concrete task -> not hot\n\nconst { site_text, ...leadClean } = lead; // raw site text is not needed in CRM\n\nreturn {\n  ...leadClean,\n  score,\n  tier,\n  reasons: ai.reasons,\n  red_flags: ai.red_flags,\n  company_summary: ai.company_summary,\n  email_subject: ai.email_subject,\n  email_body: ai.email_body,\n};"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
