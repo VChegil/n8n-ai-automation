@@ -4,9 +4,9 @@ An n8n workflow that qualifies inbound leads automatically. A prospect fills in 
 
 ## Demo
 
-[![Watch the demo (75 s)](./images/demo-thumbnail.png)](./media/demo.mp4)
+https://github.com/user-attachments/assets/fd1226c2-85ba-4f63-8729-428694b373c1
 
-*75-second demo: a lead fills in the form, gets scored, lands in HubSpot, triggers a Telegram alert and a Gmail draft. Click to open the video.*
+*75-second demo: a lead fills in the form, gets scored, lands in HubSpot, triggers a Telegram alert and a Gmail draft.*
 
 ## How it works
 
