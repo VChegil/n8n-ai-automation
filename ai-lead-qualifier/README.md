@@ -8,6 +8,8 @@ https://github.com/user-attachments/assets/fd1226c2-85ba-4f63-8729-428694b373c1
 
 *75-second demo: a lead fills in the form, gets scored, lands in HubSpot, triggers a Telegram alert and a Gmail draft.*
 
+▶️ Also on [YouTube](https://www.youtube.com/watch?v=CifSRJV4Qg4).
+
 ## How it works
 
 ![AI Lead Qualifier workflow](./images/workflow.png)
